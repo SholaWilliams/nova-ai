@@ -1,0 +1,57 @@
+# --- Environment / secrets ---
+.env
+.env.*
+!.env.example
+*.key
+*secret*
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Testing / coverage ---
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# --- Nova runtime / user data ---
+# persisted session/memory data (settings.json, facts.json, session JSONL) is user-specific runtime state
+data/
+*.session.jsonl
+settings.json
+facts.json
+
+# --- Logs ---
+*.log
+logs/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Editors / IDE ---
+.vscode/
+.idea/
+*.swp
+
+# --- Build artifacts ---
+*.spec
