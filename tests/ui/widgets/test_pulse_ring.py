@@ -74,8 +74,10 @@ def test_paints_without_error_in_every_state(ring: PulseRing, state: PulseState)
     ring.set_state(state, level=0.5)
     pixmap = ring.grab()
     assert not pixmap.isNull()
-    assert pixmap.width() == 160
-    assert pixmap.height() == 160
+    dpr = ring.devicePixelRatio()
+    expected_size = int(160 * dpr)
+    assert pixmap.width() == expected_size
+    assert pixmap.height() == expected_size
 
 
 def test_paint_count_is_bounded_for_a_handful_of_updates(
