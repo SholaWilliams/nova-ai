@@ -1,0 +1,23 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "Hello! How can I help you today?"
+          }
+        ],
+        "role": "model"
+      },
+      "finish_reason": "STOP",
+      "index": 0,
+      "safety_ratings": []
+    }
+  ],
+  "usage_metadata": {
+    "prompt_token_count": 12,
+    "candidates_token_count": 9,
+    "total_token_count": 21
+  },
+  "model_version": "gemini-3.5-flash"
+}

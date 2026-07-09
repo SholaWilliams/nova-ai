@@ -1,0 +1,12 @@
+{
+  "prompt_feedback": {
+    "block_reason": "SAFETY",
+    "safety_ratings": []
+  },
+  "usage_metadata": {
+    "prompt_token_count": 1,
+    "candidates_token_count": 0,
+    "total_token_count": 1
+  },
+  "model_version": "gemini-3.5-flash"
+}
