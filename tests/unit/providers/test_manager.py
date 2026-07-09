@@ -172,3 +172,45 @@ def test_check_health_reports_no_key_configured_for_unconfigured_provider() -> N
 
     assert available is False
     assert detail == "No key configured"
+
+
+def test_configured_names_reflects_the_providers_given_at_construction() -> None:
+    manager = ProviderManager(
+        {"gemini": FakeProvider("gemini", []), "groq": FakeProvider("groq", [])}, active="gemini"
+    )
+
+    assert manager.configured_names == frozenset({"gemini", "groq"})
+
+
+def test_configured_names_empty_when_no_providers_configured() -> None:
+    manager = ProviderManager({}, active="gemini")
+    assert manager.configured_names == frozenset()
+
+
+def test_set_provider_registers_a_previously_unconfigured_provider() -> None:
+    manager = ProviderManager({}, active="gemini")
+
+    manager.set_provider("gemini", FakeProvider("gemini", [_reply("hello")]))
+    result = manager.generate(_MESSAGES, [], _OPTS)
+
+    assert result.text == "hello"
+    assert manager.configured_names == frozenset({"gemini"})
+
+
+def test_set_provider_replaces_an_existing_provider_instance() -> None:
+    old_gemini = FakeProvider("gemini", [_reply("should not be called")])
+    manager = ProviderManager({"gemini": old_gemini}, active="gemini")
+
+    manager.set_provider("gemini", FakeProvider("gemini", [_reply("rotated key")]))
+    result = manager.generate(_MESSAGES, [], _OPTS)
+
+    assert result.text == "rotated key"
+    assert len(old_gemini.calls) == 0
+
+
+def test_set_provider_does_not_change_which_provider_is_active() -> None:
+    manager = ProviderManager({"gemini": FakeProvider("gemini", [])}, active="gemini")
+
+    manager.set_provider("groq", FakeProvider("groq", []))
+
+    assert manager.active_name == "gemini"

@@ -101,6 +101,11 @@ class MainWindow(QMainWindow):
         self._input_bar = self._build_input_bar()
         root.addWidget(self._input_bar)
 
+    @property
+    def settings_view(self) -> SettingsView:
+        """`app.py`'s wiring surface for provider selection, key entry, and Test (T-209)."""
+        return self._settings_view
+
     # ── header ───────────────────────────────────────────────────────
 
     def _build_header(self) -> QWidget:

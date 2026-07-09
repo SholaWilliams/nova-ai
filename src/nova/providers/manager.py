@@ -54,9 +54,23 @@ class ProviderManager(QObject):
     def active_name(self) -> str:
         return self._active_name
 
+    @property
+    def configured_names(self) -> frozenset[str]:
+        """Names of providers currently backed by a real instance (i.e. a key is set)."""
+        return frozenset(self._providers)
+
     def set_active(self, name: str) -> None:
         """Hot-swap the primary provider (US-12) — takes effect on the next `generate()`."""
         self._active_name = name
+
+    def set_provider(self, name: str, provider: LLMProvider) -> None:
+        """Register or replace a provider instance (US-12: a key was just entered/rotated).
+
+        Takes effect on the next `generate()`/`check_health()` call for `name`. Does not
+        itself change `active_name` — pair with `set_active()` if the newly-keyed provider
+        should also become primary.
+        """
+        self._providers[name] = provider
 
     def check_health(self, name: str) -> tuple[bool, str]:
         """Used by Settings' per-key "Test" button and startup validation (FR-47)."""
