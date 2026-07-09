@@ -1,0 +1,23 @@
+{
+  "id": "chatcmpl-123",
+  "object": "chat.completion",
+  "created": 1717000000,
+  "model": "openai/gpt-oss-120b",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Hello! How can I help?",
+        "tool_calls": null
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 10,
+    "completion_tokens": 7,
+    "total_tokens": 17
+  }
+}
