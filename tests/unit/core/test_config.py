@@ -12,6 +12,7 @@ from nova.core.config import (
     get_data_dir,
     load_settings,
     save_settings,
+    write_secret_to_env,
 )
 
 # ── get_data_dir ──────────────────────────────────────────────────────
@@ -257,3 +258,59 @@ def test_secrets_never_exposes_keys_via_repr_by_default(key: str) -> None:
     # Sanity check that Secrets is a plain BaseSettings model (no accidental logging config);
     # real secret-scrubbing in log output is core.logging's job, tested there.
     assert key in Secrets.model_fields
+
+
+# ── write_secret_to_env ───────────────────────────────────────────────
+
+
+def test_write_secret_to_env_creates_file_with_key(tmp_path: Path) -> None:
+    write_secret_to_env(tmp_path, "NOVA_GEMINI_API_KEY", "new-key")
+
+    content = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert content == "NOVA_GEMINI_API_KEY=new-key\n"
+
+
+def test_write_secret_to_env_creates_parent_directory(tmp_path: Path) -> None:
+    data_dir = tmp_path / "nested" / "dir"
+    write_secret_to_env(data_dir, "NOVA_GEMINI_API_KEY", "new-key")
+    assert (data_dir / ".env").is_file()
+
+
+def test_write_secret_to_env_replaces_existing_key_in_place(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text(
+        "NOVA_GEMINI_API_KEY=old-key\nNOVA_GROQ_API_KEY=groq-key\n", encoding="utf-8"
+    )
+
+    write_secret_to_env(tmp_path, "NOVA_GEMINI_API_KEY", "rotated-key")
+
+    lines = (tmp_path / ".env").read_text(encoding="utf-8").splitlines()
+    assert lines == ["NOVA_GEMINI_API_KEY=rotated-key", "NOVA_GROQ_API_KEY=groq-key"]
+
+
+def test_write_secret_to_env_preserves_other_keys_when_adding_new_one(tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("NOVA_GEMINI_API_KEY=gemini-key\n", encoding="utf-8")
+
+    write_secret_to_env(tmp_path, "NOVA_GROQ_API_KEY", "groq-key")
+
+    lines = (tmp_path / ".env").read_text(encoding="utf-8").splitlines()
+    assert lines == ["NOVA_GEMINI_API_KEY=gemini-key", "NOVA_GROQ_API_KEY=groq-key"]
+
+
+def test_write_secret_to_env_leaves_no_temp_file_behind(tmp_path: Path) -> None:
+    write_secret_to_env(tmp_path, "NOVA_GEMINI_API_KEY", "new-key")
+    assert list(tmp_path.iterdir()) == [tmp_path / ".env"]
+
+
+def test_write_secret_to_env_cleans_up_temp_file_on_write_failure(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise OSError("disk full (simulated)")
+
+    monkeypatch.setattr("os.replace", _boom)
+
+    with pytest.raises(OSError, match="disk full"):
+        write_secret_to_env(tmp_path, "NOVA_GEMINI_API_KEY", "new-key")
+
+    assert not (tmp_path / ".env").exists()
+    assert list(tmp_path.iterdir()) == []

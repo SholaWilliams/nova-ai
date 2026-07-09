@@ -184,6 +184,43 @@ def load_settings(path: Path) -> Settings:
     return Settings.model_validate(merged)
 
 
+def write_secret_to_env(data_dir: Path, key: str, value: str) -> None:
+    """Atomically upsert one `KEY=value` line in the data-dir `.env` file (docs/10 §4).
+
+    Secrets never get written to `settings.json` (NFR-8) — this is their one persistence
+    path. `key` is the full env var name (e.g. `NOVA_GEMINI_API_KEY`). Mirrors
+    `save_settings`'s temp-file+`os.replace` durability; preserves any other lines already
+    in the file.
+    """
+    data_dir.mkdir(parents=True, exist_ok=True)
+    env_path = data_dir / ".env"
+
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.is_file() else []
+
+    prefix = f"{key}="
+    new_line = f"{key}={value}"
+    for i, line in enumerate(lines):
+        if line.startswith(prefix):
+            lines[i] = new_line
+            break
+    else:
+        lines.append(new_line)
+
+    payload = "\n".join(lines) + "\n"
+
+    fd, tmp_path_str = tempfile.mkstemp(dir=data_dir, prefix=".env.", suffix=".tmp")
+    tmp_path = Path(tmp_path_str)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, env_path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
 def save_settings(settings: Settings, path: Path) -> None:
     """Write `settings.json` atomically: temp file in the same dir, then `os.replace`."""
     path.parent.mkdir(parents=True, exist_ok=True)
