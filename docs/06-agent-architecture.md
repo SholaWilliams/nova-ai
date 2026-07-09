@@ -115,6 +115,8 @@ Provider adapters translate to/from native formats (Gemini `contents`/`functionC
 |---|---|---|
 | Provider transient (timeout, 5xx, rate limit) | 1 retry same provider → fallback provider (Phase 10 §6) | status bar "Groq (fallback)" (warning tint) |
 | Both providers down | abort loop | ERROR stage + "I can't reach my brain right now — is the internet on?" |
+| Prompt hard-blocked (`SafetyBlocked` raised — no candidate generated at all) | short-circuit straight to a gentle refusal, bypassing `Router` entirely; never retried, never falls back (Phase 10 §3.2: the block is a correct outcome, not an outage) | gentle refusal, no ERROR stage |
+| Response soft-filtered (`LLMResponse(finish_reason="safety")` — a candidate did come back, but got filtered) | same gentle-refusal reply as the hard-block case | gentle refusal, no ERROR stage |
 | Malformed tool call | `RepairRoute`: one round-trip appending a corrective tool-error message ("unknown tool X / invalid args: {errors}. Choose from: …") | brief extra "Thinking…" |
 | Repair also fails | give up on tools this turn | LLM asked to answer directly + apologize |
 | Tool error / timeout | result fed back to LLM (rule 3: report honestly) | honest kid-friendly explanation + failed EXECUTING chip |
@@ -122,6 +124,8 @@ Provider adapters translate to/from native formats (Gemini `contents`/`functionC
 | Iteration cap hit | stop, apologize | ERROR stage + "That got too complicated for me — try asking a simpler way?" |
 
 Every row ends in a conversational reply (A-6) — errors are teachable moments (EO-7).
+
+**M2 note:** with no tools registered yet, every `RepairRoute` is structurally a defensive path (a provider hallucinating a call despite an empty tool list) rather than a real invalid-argument repair, so "repair also fails" and "iteration cap hit" collapse onto the same mechanism until M3's tools give them independently reachable outcomes — see docs/ai/MEMORY.md.
 
 ## 7. Concurrency & Cancellation
 
@@ -138,5 +142,6 @@ The agent is fully testable without network or Qt: inject `FakeProvider` (script
 | Version | Date | Change |
 |---------|------|--------|
 | 1.0.0 | 2026-07-08 | Initial version for Phase 6 review. |
+| 1.1.0 | 2026-07-09 | M2: §6 error matrix gains explicit hard-block (`SafetyBlocked`) vs soft-filter (`finish_reason="safety"`) rows, both resolving to the same gentle-refusal reply; noted the M2-only collapse of "repair also fails" into "iteration cap hit" while the tool registry is always empty. |
 
 **Exit check:** loop bounded and cancellable; every LLM output shape has a defined route; every failure row lands conversationally; prompt encodes the educational rules (FR-18, NFR-7).

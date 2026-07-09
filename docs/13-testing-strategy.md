@@ -27,7 +27,7 @@
 
 - **Fakes over mocks**: `FakeProvider` (scripted `LLMResponse` sequences), `FakeClock`, `RecordingEventBus`, in-memory `MemoryService`, `tmp_path` file roots. Patch-style mocking only at true edges (e.g., `os.startfile`).
 - Focus areas & examples: calculator caps (`9**9**9` → `too_large`); VAD endpointing on synthesized frame patterns; retrieval scoring; config migration & corrupt-file quarantine; Planner token budget; Router shapes incl. malformed JSON; Executor watchdog with a deliberately slow stub tool.
-- **Coverage gate: ≥ 70 % on `core`, `agent`, `tools`, `memory`** (NFR-11); `ui` exempt from the numeric gate (covered by widget tests).
+- **Coverage gate: ≥ 70 % on `core`, `agent`, `providers`, `tools`, `memory`** (NFR-11) — `providers` added at M2 (its fallback/cooldown state machine is some of the most intricate logic in the milestone; the original enumeration omitting it read as a doc gap, not a deliberate exclusion). `ui` exempt from the numeric gate (covered by widget tests).
 
 ## 3. Integration Tests (the agent on a bench)
 
@@ -87,5 +87,6 @@ PR merge gate = all five green (Phase 20 §5). The `--self-check` startup flag i
 | Version | Date | Change |
 |---------|------|--------|
 | 1.0.0 | 2026-07-08 | Initial version for Phase 13 review. |
+| 1.1.0 | 2026-07-09 | M2: §2 coverage-gate enumeration adds `providers` (was omitted, read as a gap not a deliberate exclusion). CI's pytest step now actually excludes `live`/`record` markers, matching §1's iron rule and §7's pipeline description. |
 
 **Exit check:** every PRD acceptance criterion has a home; NG-9 is enforced by a failing test, not a promise; CI is key-free; release gates are unambiguous.

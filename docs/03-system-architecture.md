@@ -462,6 +462,10 @@ Error hierarchy in `core.errors`:
 NovaError
 ├── ConfigError          # bad/missing settings, API keys (FR-47)
 ├── ProviderError        # LLM API failures → triggers fallback (FR-48)
+│   ├── AuthError        # bad key — never retried (Phase 10 §3.2)
+│   ├── RateLimited      # throttled; honors retry_after if given
+│   ├── Transient        # timeout/5xx — worth one same-provider retry
+│   └── SafetyBlocked    # hard block, no candidate at all — never retried/falls back
 ├── SpeechError          # mic/STT/TTS failures (SC-6)
 ├── ToolError            # tool execution failures
 │   ├── ToolTimeout      # watchdog fired (FR-49)
