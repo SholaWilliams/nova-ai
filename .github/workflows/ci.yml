@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# docs/13 §7 pipeline: ruff -> mypy(core[, agent once it exists]) -> import-linter -> pytest
+# with a coverage gate. All five gates must be green to merge (docs/20 §5).
+jobs:
+  quality-gates:
+    runs-on: windows-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: ruff check
+        run: uv run ruff check .
+
+      - name: ruff format --check
+        run: uv run ruff format --check .
+
+      # AGENTS.md scopes this to core + agent; agent doesn't exist until M2 (T-201+).
+      - name: mypy (core)
+        run: uv run mypy src/nova/core
+
+      - name: import-linter
+        run: uv run lint-imports
+
+      - name: pytest (unit + ui, coverage gate on core >= 70%, NFR-11)
+        run: uv run pytest --cov=src/nova/core --cov-report=term-missing --cov-fail-under=70
