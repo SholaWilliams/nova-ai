@@ -59,7 +59,27 @@ class ChatMessage:
     content: str | None
     tool_calls: tuple[ToolCall, ...] = ()
     tool_call_id: str | None = None
+
+@dataclass(frozen=True)
+class ToolSchema:                  # M2: inert stub, always passed as () until Phase 7 tools exist
+    name: str
+    description: str
+    parameters: dict[str, Any]
+
+@dataclass(frozen=True)
+class ProviderStatus:              # M2 — drives the header status cluster (FR-43)
+    active: str
+    mode: Literal["normal", "fallback", "down"]
+    detail: str
 ```
+
+`ToolSchema` and `ProviderStatus` live here rather than in `providers/` or `tools/` because
+they're shapes two sibling layers must agree on without importing each other (D-2/D-3) or
+`ui` needing to reach past `core` (D-5) — see ARCHITECTURE_RULES.md's "cross-layer data
+shape" row. `LLMResponse`, `GenerateOptions`, `ProviderHealth`, and `ProviderCaps` (Phase 10
+§1) are *not* here — they're provider-specific vocabulary that only `agent` needs to reach via
+the ABC (D-4), so they live in `providers/base.py` instead, alongside the `LLMProvider` class
+itself.
 
 ## 2. Pipeline Events (`nova/core/events.py`)
 

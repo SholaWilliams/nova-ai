@@ -68,8 +68,13 @@ class ProviderSettings(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     active: Literal["gemini", "groq"] = "gemini"
-    gemini_model: str = "gemini-2.5-flash"
-    groq_model: str = "llama-3.3-70b-versatile"
+    # ⚠️ verified at T-202/T-203 (2026-07-09): gemini-2.5-flash shuts down 2026-10-16
+    # (gemini-3.5-flash GA since 2026-05-19, no announced shutdown); llama-3.3-70b-versatile
+    # was deprecated for Groq's free/dev tier on 2026-06-17 (Groq's own recommended
+    # replacement: openai/gpt-oss-120b, matching the old model's tier and trained for
+    # agentic tool-calling — the reason Groq was chosen at all, TD-4). See docs/04 TD-4.
+    gemini_model: str = "gemini-3.5-flash"
+    groq_model: str = "openai/gpt-oss-120b"
 
 
 class VoiceSettings(BaseModel):
