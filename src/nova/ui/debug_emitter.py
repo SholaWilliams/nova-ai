@@ -8,7 +8,6 @@ reachable from a real request, and only ever wired to a clearly-labeled dev affo
 
 from __future__ import annotations
 
-import secrets
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -16,6 +15,7 @@ from typing import Any
 from PySide6.QtCore import QTimer
 
 from nova.core.events import EventBus, EventStatus, PipelineEvent, PipelineStage
+from nova.core.ids import new_request_id
 
 _STEP_DELAY_MS = 550
 
@@ -68,16 +68,12 @@ _SCRIPT: list[tuple[PipelineStage, EventStatus, str, dict[str, Any] | None]] = [
 ]
 
 
-def _new_request_id() -> str:
-    return f"req_{secrets.token_hex(4)}"
-
-
 def emit_fake_pipeline(bus: EventBus, on_finished: Callable[[], None] | None = None) -> None:
     """Publish `_SCRIPT` as a QTimer-paced sequence of real PipelineEvents on `bus`.
 
     Main-thread only (drives Qt timers) — call from a button click handler, not a worker.
     """
-    request_id = _new_request_id()
+    request_id = new_request_id()
 
     def publish_step(index: int) -> None:
         if index >= len(_SCRIPT):

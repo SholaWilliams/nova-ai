@@ -7,6 +7,8 @@ requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
     "PySide6>=6.7,<7",
+    "google-genai>=1.0,<3",
+    "groq>=0.20,<2",
     "pydantic>=2.7,<3",
     "pydantic-settings>=2.3,<3",
     "python-dotenv>=1.0,<2",
@@ -61,6 +63,13 @@ warn_return_any = true
 module = "nova.core.*"
 strict = true
 
+# nova.providers.* deliberately stays out of the strict zone (CODING_STANDARDS.md,
+# TD-12, AGENTS.md's verify command all agree: "core, agent" only) — it gets zero
+# mypy checking, not permissive, which is consistent doc intent, not a gap.
+[[tool.mypy.overrides]]
+module = "nova.agent.*"
+strict = true
+
 # ── pytest ────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
 minversion = "8.0"
@@ -73,12 +82,18 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["src/nova/core"]
+# docs/13 §2's "core, agent, tools, memory" enumeration omits providers, but the PRD's
+# actual NFR-11 text just says "core logic" — providers hosts the most intricate new
+# logic in M2 (fallback/cooldown state machine), so it's included here (flagged as a
+# likely docs/13 §2 gap, not a deliberate exclusion, in docs/ai/MEMORY.md).
+source = ["src/nova/core", "src/nova/agent", "src/nova/providers"]
 
 # ── import-linter (D-1...D-7, docs/03 §6) ────────────────────────────
-# Scoped to what exists at M1: core/ui/app.py. D-2/D-3/D-4 (providers,
-# speech, memory, tools, agent) are added as new layers when those
-# packages land (M2+) — see docs/03 §6 for the target dependency graph.
+# M1 scoped to core/ui/app.py. M2 adds providers/agent. A single `layers` contract
+# cannot express "ui restricted to core-only, agent allowed core+providers" (layers
+# grant every entry transitive access to everything below it as a block) — hence the
+# second disjoint `layers` contract (ui deliberately absent from it) plus supplementary
+# `forbidden` contracts closing both directions of the ui <-> agent/providers gap.
 [tool.importlinter]
 root_packages = ["nova"]
 
@@ -90,3 +105,31 @@ layers = [
     "nova.ui",
     "nova.core",
 ]
+
+[[tool.importlinter.contracts]]
+name = "M2 layering: app -> agent -> providers -> core (D-1, D-2, D-4, D-6, D-7)"
+type = "layers"
+layers = [
+    "nova.app",
+    "nova.agent",
+    "nova.providers",
+    "nova.core",
+]
+
+[[tool.importlinter.contracts]]
+name = "D-5: ui imports core only, never agent/providers"
+type = "forbidden"
+source_modules = ["nova.ui"]
+forbidden_modules = ["nova.agent", "nova.providers"]
+
+[[tool.importlinter.contracts]]
+name = "D-4 corollary: agent/providers never import ui"
+type = "forbidden"
+source_modules = ["nova.agent", "nova.providers"]
+forbidden_modules = ["nova.ui"]
+
+[[tool.importlinter.contracts]]
+name = "D-4: agent depends on provider ABCs/manager only, never concrete adapters"
+type = "forbidden"
+source_modules = ["nova.agent"]
+forbidden_modules = ["nova.providers.gemini", "nova.providers.groq"]

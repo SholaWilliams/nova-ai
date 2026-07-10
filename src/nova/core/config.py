@@ -68,8 +68,13 @@ class ProviderSettings(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     active: Literal["gemini", "groq"] = "gemini"
-    gemini_model: str = "gemini-2.5-flash"
-    groq_model: str = "llama-3.3-70b-versatile"
+    # ⚠️ verified at T-202/T-203 (2026-07-09): gemini-2.5-flash shuts down 2026-10-16
+    # (gemini-3.5-flash GA since 2026-05-19, no announced shutdown); llama-3.3-70b-versatile
+    # was deprecated for Groq's free/dev tier on 2026-06-17 (Groq's own recommended
+    # replacement: openai/gpt-oss-120b, matching the old model's tier and trained for
+    # agentic tool-calling — the reason Groq was chosen at all, TD-4). See docs/04 TD-4.
+    gemini_model: str = "gemini-3.5-flash"
+    groq_model: str = "openai/gpt-oss-120b"
 
 
 class VoiceSettings(BaseModel):
@@ -177,6 +182,43 @@ def load_settings(path: Path) -> Settings:
             merged[key] = model_cls()
 
     return Settings.model_validate(merged)
+
+
+def write_secret_to_env(data_dir: Path, key: str, value: str) -> None:
+    """Atomically upsert one `KEY=value` line in the data-dir `.env` file (docs/10 §4).
+
+    Secrets never get written to `settings.json` (NFR-8) — this is their one persistence
+    path. `key` is the full env var name (e.g. `NOVA_GEMINI_API_KEY`). Mirrors
+    `save_settings`'s temp-file+`os.replace` durability; preserves any other lines already
+    in the file.
+    """
+    data_dir.mkdir(parents=True, exist_ok=True)
+    env_path = data_dir / ".env"
+
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.is_file() else []
+
+    prefix = f"{key}="
+    new_line = f"{key}={value}"
+    for i, line in enumerate(lines):
+        if line.startswith(prefix):
+            lines[i] = new_line
+            break
+    else:
+        lines.append(new_line)
+
+    payload = "\n".join(lines) + "\n"
+
+    fd, tmp_path_str = tempfile.mkstemp(dir=data_dir, prefix=".env.", suffix=".tmp")
+    tmp_path = Path(tmp_path_str)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, env_path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def save_settings(settings: Settings, path: Path) -> None:

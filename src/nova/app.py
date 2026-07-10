@@ -8,14 +8,53 @@ from __future__ import annotations
 
 import sys
 
+from PySide6.QtCore import Qt, QThread
 from PySide6.QtWidgets import QApplication
 
-from nova.core.config import Secrets, get_data_dir, load_settings
+from nova.agent.agent import Agent
+from nova.agent.planner import Planner, load_system_prompt
+from nova.agent.router import Router
+from nova.agent.state import ConversationState
+from nova.agent.worker import AgentWorker
+from nova.core.config import (
+    Secrets,
+    Settings,
+    get_data_dir,
+    load_settings,
+    save_settings,
+    write_secret_to_env,
+)
 from nova.core.errors import install_excepthook
 from nova.core.events import EventBus
 from nova.core.logging import EventLogBridge, register_secrets, setup_logging
+from nova.core.models import ProviderStatus
+from nova.providers.base import LLMProvider
+from nova.providers.gemini import GeminiProvider
+from nova.providers.groq import GroqProvider
+from nova.providers.manager import ProviderManager
 from nova.ui.main_window import MainWindow
 from nova.ui.theme import build_stylesheet
+
+_ENV_KEY_NAMES = {"gemini": "NOVA_GEMINI_API_KEY", "groq": "NOVA_GROQ_API_KEY"}
+_PROVIDER_LABELS = {"gemini": "Gemini", "groq": "Groq"}
+
+
+def _build_provider(name: str, secrets: Secrets, settings: Settings) -> LLMProvider | None:
+    """Construct the adapter for `name` iff a key is configured — never a FakeProvider."""
+    if name == "gemini" and secrets.gemini_api_key:
+        return GeminiProvider(api_key=secrets.gemini_api_key, model=settings.provider.gemini_model)
+    if name == "groq" and secrets.groq_api_key:
+        return GroqProvider(api_key=secrets.groq_api_key, model=settings.provider.groq_model)
+    return None
+
+
+def _build_providers(secrets: Secrets, settings: Settings) -> dict[str, LLMProvider]:
+    providers: dict[str, LLMProvider] = {}
+    for name in ("gemini", "groq"):
+        provider = _build_provider(name, secrets, settings)
+        if provider is not None:
+            providers[name] = provider
+    return providers
 
 
 def main() -> int:
@@ -36,6 +75,90 @@ def main() -> int:
     EventLogBridge(bus)
 
     window = MainWindow(bus, settings)
+
+    provider_manager = ProviderManager(
+        _build_providers(secrets, settings), settings.provider.active
+    )
+    agent = Agent(
+        provider_manager,
+        Planner(load_system_prompt()),
+        Router(),
+        ConversationState(max_iterations=settings.advanced.max_iterations),
+        bus,
+    )
+    worker = AgentWorker(agent)
+    agent_thread = QThread()
+    worker.moveToThread(agent_thread)
+    agent_thread.start()
+
+    window.submit_requested.connect(worker.handle_request)
+    worker.reply_ready.connect(window.on_reply_ready)
+    worker.request_rejected.connect(window.on_request_rejected)
+    worker.request_cancelled.connect(window.on_request_cancelled)
+    worker.failed.connect(window.on_request_failed)
+    # Direct, not queued: `cancel_current()` must reach the worker's running `handle()` call
+    # *while it's blocked* — a queued connection would sit undelivered in the worker thread's
+    # own event queue until that blocking call returns, defeating cancellation (see
+    # AgentWorker.cancel_current's docstring).
+    window.cancel_requested.connect(worker.cancel_current, Qt.ConnectionType.DirectConnection)
+
+    provider_manager.status_changed.connect(window.set_provider_status)
+
+    def _refresh_provider_status(name: str) -> None:
+        available, detail = provider_manager.check_health(name)
+        label = _PROVIDER_LABELS.get(name, name)
+        if available:
+            window.set_provider_status(ProviderStatus(active=name, mode="normal", detail=label))
+        else:
+            window.set_provider_status(
+                ProviderStatus(active=name, mode="down", detail=f"{label}: {detail}")
+            )
+
+    def _on_provider_selected(name: str) -> None:
+        settings.provider.active = name
+        save_settings(settings, data_dir / "settings.json")
+        provider_manager.set_active(name)
+        _refresh_provider_status(name)
+
+    def _on_key_changed(name: str, value: str) -> None:
+        nonlocal secrets
+        write_secret_to_env(data_dir, _ENV_KEY_NAMES[name], value)
+        secrets = Secrets.load(data_dir=data_dir)
+        register_secrets(secrets.gemini_api_key, secrets.groq_api_key)
+
+        provider = _build_provider(name, secrets, settings)
+        window.settings_view.set_key_configured(name, provider is not None)
+        if provider is not None:
+            provider_manager.set_provider(name, provider)
+            if name == provider_manager.active_name:
+                _refresh_provider_status(name)
+
+    def _on_test_requested(name: str) -> None:
+        window.settings_view.set_testing(name, True)
+        available, detail = provider_manager.check_health(name)
+        window.settings_view.set_key_test_result(name, available, detail)
+        window.settings_view.set_testing(name, False)
+
+    window.settings_view.provider_selected.connect(_on_provider_selected)
+    window.settings_view.key_changed.connect(_on_key_changed)
+    window.settings_view.test_requested.connect(_on_test_requested)
+
+    for name in ("gemini", "groq"):
+        window.settings_view.set_key_configured(name, name in provider_manager.configured_names)
+
+    if provider_manager.configured_names:
+        _refresh_provider_status(settings.provider.active)
+    else:
+        window.settings_view.show_missing_key_banner(
+            "No API key configured yet — add one below to start chatting."
+        )
+
+    def _shutdown_agent_thread() -> None:
+        agent_thread.quit()
+        agent_thread.wait()
+
+    app.aboutToQuit.connect(_shutdown_agent_thread)
+
     window.show()
 
     return app.exec()

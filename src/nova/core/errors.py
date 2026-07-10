@@ -36,6 +36,37 @@ class ProviderError(NovaError):
     """An LLM API call failed — triggers fallback to the next provider (FR-48)."""
 
 
+class AuthError(ProviderError):
+    """An API key was rejected. Never retried — retrying a bad key is just noise."""
+
+
+class RateLimited(ProviderError):  # noqa: N818 - name matches docs/10 §1's spec'd tree exactly
+    """The provider throttled the request. `retry_after` (seconds) is honored if given."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        retry_after: float | None = None,
+        friendly_message: str | None = None,
+    ) -> None:
+        super().__init__(message, friendly_message=friendly_message)
+        self.retry_after = retry_after
+
+
+class Transient(ProviderError):  # noqa: N818 - name matches docs/10 §1's spec'd tree exactly
+    """A timeout, 5xx, or other transient failure — worth one same-provider retry."""
+
+
+class SafetyBlocked(ProviderError):  # noqa: N818 - name matches docs/10 §1's spec'd tree exactly
+    """The provider refused to generate at all (blocked before any candidate existed).
+
+    Distinct from a normal `LLMResponse(finish_reason="safety")` (a *soft* filter where a
+    response did come back) — this is the *hard* case with nothing to normalize. Never
+    triggers retry or fallback (docs/10 §3.2): the block is a correct outcome, not an outage.
+    """
+
+
 class SpeechError(NovaError):
     """A microphone, STT, or TTS operation failed (SC-6)."""
 

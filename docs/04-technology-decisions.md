@@ -55,8 +55,8 @@ Each decision is a mini-ADR: **Decision → Why → Rejected alternatives**. Any
 
 ## TD-4 · LLM providers: Gemini + Groq
 
-**Why (Gemini):** strong native function-calling, generous free tier, first-party `google-genai` SDK, adjustable safety settings (NFR-7). Default model **`gemini-2.5-flash`** ⚠️ — fast + cheap tier.
-**Why (Groq):** extremely low latency (great for a kids' demo — waiting kills attention), free tier, OpenAI-compatible tool calling, hosts **`llama-3.3-70b-versatile`** ⚠️ with tool use — and doubles as our STT vendor (TD-5), one key covering two needs.
+**Why (Gemini):** strong native function-calling, generous free tier, first-party `google-genai` SDK, adjustable safety settings (NFR-7). Default model **`gemini-3.5-flash`** — fast + cheap tier. (Verified at M2/T-202: `gemini-2.5-flash`, the model originally named here, shuts down 2026-10-16; `gemini-3.5-flash` has been GA since 2026-05-19 with no announced shutdown.)
+**Why (Groq):** extremely low latency (great for a kids' demo — waiting kills attention), free tier, OpenAI-compatible tool calling, hosts **`openai/gpt-oss-120b`** with agentic tool use — and doubles as our STT vendor (TD-5), one key covering two needs. (Verified at M2/T-203: `llama-3.3-70b-versatile`, the model originally named here, was deprecated for Groq's free/developer tier on 2026-06-17; `openai/gpt-oss-120b` is Groq's own recommended replacement, matching the old model's tier and purpose-trained for agentic tool-calling — the exact reason Groq was chosen at all.)
 **Rejected:** **OpenAI/Anthropic** — excellent tool calling but no meaningful free tier for a classroom/education budget (R-3); designed for as *future providers* in Phase 10; **local models** — excluded by NG-2.
 
 ## TD-5 · STT: Groq-hosted Whisper
@@ -126,5 +126,6 @@ Runtime deps (packaged): PySide6, google-genai, groq, edge-tts, pyttsx3, soundde
 | Version | Date | Change |
 |---------|------|--------|
 | 1.0.0 | 2026-07-08 | Initial version for Phase 4 review. |
+| 1.1.0 | 2026-07-09 | M2/T-202-T-203: swapped stale default models — `gemini-2.5-flash` → `gemini-3.5-flash` (old model shuts down 2026-10-16), `llama-3.3-70b-versatile` → `openai/gpt-oss-120b` (deprecated for Groq's free/dev tier 2026-06-17). Both ⚠️s resolved. |
 
 **Exit check:** every choice traces to a constraint (hardware, cost, license, pedagogy); all ⚠️ items are listed as M1 verification tasks in Phase 12.

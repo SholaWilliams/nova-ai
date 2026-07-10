@@ -70,3 +70,34 @@ class ChatMessage:
     content: str | None
     tool_calls: tuple[ToolCall, ...] = ()
     tool_call_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ToolSchema:
+    """A tool's shape as advertised to an LLM provider.
+
+    Lives in `core` (not `providers` or `tools`) because `providers` and `tools` are sibling
+    layers that must never import each other (D-2/D-3) yet both need to agree on this shape —
+    ARCHITECTURE_RULES.md's decision tree names this exact case. Inert in M2: no tools exist
+    yet, so `ProviderManager.generate()` is always called with `tools=()`; this type only
+    needs to exist so the `LLMProvider.generate()` signature is real ahead of M3.
+    """
+
+    name: str
+    description: str
+    parameters: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ProviderStatus:
+    """The active LLM provider's health, for the header status cluster (FR-43).
+
+    Lives in `core`, not `providers/manager.py`, because `ui` imports core only (D-5) — not
+    even the ABCs `agent` gets. Putting this here lets `ProviderManager` emit it and
+    `MainWindow` receive it without either importing the other; `app.py` wires the one
+    connection between them.
+    """
+
+    active: str
+    mode: Literal["normal", "fallback", "down"]
+    detail: str

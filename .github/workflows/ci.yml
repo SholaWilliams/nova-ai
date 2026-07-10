@@ -31,12 +31,17 @@ jobs:
       - name: ruff format --check
         run: uv run ruff format --check .
 
-      # AGENTS.md scopes this to core + agent; agent doesn't exist until M2 (T-201+).
-      - name: mypy (core)
-        run: uv run mypy src/nova/core
+      # AGENTS.md scopes this to core + agent (per docs/ai/CODING_STANDARDS.md).
+      - name: mypy (core, agent)
+        run: uv run mypy src/nova/core src/nova/agent
 
       - name: import-linter
         run: uv run lint-imports
 
-      - name: pytest (unit + ui, coverage gate on core >= 70%, NFR-11)
-        run: uv run pytest --cov=src/nova/core --cov-report=term-missing --cov-fail-under=70
+      # Iron rule (docs/13 §1): CI never calls paid/keyed APIs — `live`/`record`-marked
+      # tests are excluded here; `record` tests regenerate golden fixtures manually.
+      - name: pytest (unit + integration + ui, coverage gate on core+agent+providers >= 70%, NFR-11)
+        run: >-
+          uv run pytest -m "not live and not record"
+          --cov=src/nova/core --cov=src/nova/agent --cov=src/nova/providers
+          --cov-report=term-missing --cov-fail-under=70
