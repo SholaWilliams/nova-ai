@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from nova.core.config import Settings
-from nova.core.events import EventBus
+from nova.core.events import EventBus, EventStatus, PipelineEvent, PipelineStage
 from nova.core.ids import new_request_id
 from nova.core.models import AssistantReply, ProviderStatus, UserInput
 from nova.ui import theme
@@ -36,6 +36,7 @@ from nova.ui.theme import Color, Spacing
 from nova.ui.views.chat_view import ChatView
 from nova.ui.views.pipeline_view import PipelineView
 from nova.ui.views.settings_view import SettingsView
+from nova.ui.widgets.confirm_dialog import ConfirmDialog
 
 _WINDOW_SIZE = (1200, 760)
 _MIN_WINDOW_SIZE = (980, 640)
@@ -64,6 +65,7 @@ class MainWindow(QMainWindow):
 
     submit_requested = Signal(object)  # UserInput
     cancel_requested = Signal()
+    confirmation_answered = Signal(str, bool)  # call_id, approved (FR-20)
 
     def __init__(self, bus: EventBus, settings: Settings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -100,6 +102,34 @@ class MainWindow(QMainWindow):
 
         self._input_bar = self._build_input_bar()
         root.addWidget(self._input_bar)
+
+        self._confirm_dialog: ConfirmDialog | None = None
+        # EventBus delivers on the main thread (queued) — safe to open a modal from here.
+        bus.event_published.connect(self._on_pipeline_event)
+
+    # ── confirmation gate (docs/05 §6.6) ───────────────────────────────
+
+    def _on_pipeline_event(self, event: PipelineEvent) -> None:
+        if event.stage != PipelineStage.AWAITING_CONFIRMATION:
+            return
+        payload = event.payload or {}
+        call_id = payload.get("call_id")
+        if event.status == EventStatus.STARTED and call_id:
+            self._ask_confirmation(call_id, payload)
+        elif self._confirm_dialog is not None:
+            # resolved elsewhere (decision timeout in the Executor) — close a stale dialog
+            self._confirm_dialog.reject()
+
+    def _ask_confirmation(self, call_id: str, payload: dict) -> None:
+        detail = payload.get("detail") or "May I do that?"
+        preview = list(payload.get("preview") or [])
+        dialog = ConfirmDialog(detail, preview, self)
+        self._confirm_dialog = dialog
+        try:
+            approved = dialog.exec() == ConfirmDialog.DialogCode.Accepted
+        finally:
+            self._confirm_dialog = None
+        self.confirmation_answered.emit(call_id, approved)
 
     @property
     def settings_view(self) -> SettingsView:

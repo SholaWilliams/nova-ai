@@ -78,6 +78,7 @@ class StageChip(QWidget):
         self._detail = ""
         self._duration_ms: int | None = None
         self._tool_title: str | None = None
+        self._dynamic_icon: str | None = None
         self._expanded = False
         # keeps a live Python ref while running (avoids GC before Qt finishes the animation)
         self._crossfade_animation: QPropertyAnimation | None = None
@@ -131,6 +132,9 @@ class StageChip(QWidget):
         self._detail = event.detail
         payload = event.payload or {}
         self._tool_title = payload.get("tool_title")
+        # T-312: SELECTING_TOOL's icon is dynamic — the chosen tool's own icon (docs/05 §5)
+        if payload.get("icon"):
+            self._dynamic_icon = payload["icon"]
 
         if event.status == EventStatus.STARTED:
             self._chip_state = ChipState.ACTIVE
@@ -153,6 +157,7 @@ class StageChip(QWidget):
         self._detail = ""
         self._duration_ms = None
         self._tool_title = None
+        self._dynamic_icon = None
         self._expanded = False
         self._detail_label.setVisible(False)
         self._apply_visual_state()
@@ -175,7 +180,7 @@ class StageChip(QWidget):
         self._text_label.setFont(label_font)
         self._status_label.setFont(theme.font(theme.FontRole.CAPTION))
 
-        icon_name = _STAGE_ICONS.get(self.stage)
+        icon_name = self._dynamic_icon or _STAGE_ICONS.get(self.stage)
         status_text = ""
         if self._chip_state == ChipState.PENDING:
             text_color = Color.TEXT_SECONDARY
