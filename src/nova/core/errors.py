@@ -72,7 +72,18 @@ class SpeechError(NovaError):
 
 
 class ToolError(NovaError):
-    """A tool failed to execute."""
+    """A tool failed to execute.
+
+    `code` is the machine-readable error id from the tool's declared error set (docs/07);
+    `str(exc)` is the LLM-readable message the Executor feeds back so the model can respond
+    helpfully (docs/11 §3.1). Both flow into the uniform error envelope.
+    """
+
+    def __init__(
+        self, message: str, *, code: str = "tool_error", friendly_message: str | None = None
+    ) -> None:
+        super().__init__(message, friendly_message=friendly_message)
+        self.code = code
 
 
 class ToolTimeout(ToolError):  # noqa: N818 - name matches the approved docs/03 §14 tree exactly

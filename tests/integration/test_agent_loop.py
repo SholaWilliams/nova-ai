@@ -57,7 +57,7 @@ def _build_stack(
         Router(),  # M2: known_tool_names is always empty
         ConversationState(max_iterations=max_iterations),
         bus,
-        GenerateOptions(),
+        opts=GenerateOptions(),
     )
     return agent, events
 

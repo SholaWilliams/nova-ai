@@ -58,6 +58,12 @@ class AgentWorker(QObject):
         finally:
             self._busy = False
 
+    def confirm(self, call_id: str, approved: bool) -> None:
+        """Call directly (never via a queued connection) — same reasoning as
+        `cancel_current()`: the worker thread is blocked inside the Executor's
+        confirmation gate, so a queued slot would never be delivered in time."""
+        self._agent.confirm(call_id, approved)
+
     def cancel_current(self) -> None:
         """Call directly (never via a queued connection) from any thread.
 

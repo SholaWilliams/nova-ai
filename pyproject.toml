@@ -12,6 +12,8 @@ dependencies = [
     "pydantic>=2.7,<3",
     "pydantic-settings>=2.3,<3",
     "python-dotenv>=1.0,<2",
+    "simpleeval>=1.0,<2",
+    "httpx>=0.27,<1",
 ]
 
 [dependency-groups]
@@ -86,7 +88,7 @@ markers = [
 # actual NFR-11 text just says "core logic" — providers hosts the most intricate new
 # logic in M2 (fallback/cooldown state machine), so it's included here (flagged as a
 # likely docs/13 §2 gap, not a deliberate exclusion, in docs/ai/MEMORY.md).
-source = ["src/nova/core", "src/nova/agent", "src/nova/providers"]
+source = ["src/nova/core", "src/nova/agent", "src/nova/providers", "src/nova/tools"]
 
 # ── import-linter (D-1...D-7, docs/03 §6) ────────────────────────────
 # M1 scoped to core/ui/app.py. M2 adds providers/agent. A single `layers` contract
@@ -107,12 +109,12 @@ layers = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "M2 layering: app -> agent -> providers -> core (D-1, D-2, D-4, D-6, D-7)"
+name = "M2/M3 layering: app -> agent -> (providers | tools) -> core (D-1..D-4, D-6, D-7)"
 type = "layers"
 layers = [
     "nova.app",
     "nova.agent",
-    "nova.providers",
+    "nova.providers : nova.tools",
     "nova.core",
 ]
 
@@ -120,12 +122,12 @@ layers = [
 name = "D-5: ui imports core only, never agent/providers"
 type = "forbidden"
 source_modules = ["nova.ui"]
-forbidden_modules = ["nova.agent", "nova.providers"]
+forbidden_modules = ["nova.agent", "nova.providers", "nova.tools"]
 
 [[tool.importlinter.contracts]]
-name = "D-4 corollary: agent/providers never import ui"
+name = "D-4 corollary: agent/providers/tools never import ui"
 type = "forbidden"
-source_modules = ["nova.agent", "nova.providers"]
+source_modules = ["nova.agent", "nova.providers", "nova.tools"]
 forbidden_modules = ["nova.ui"]
 
 [[tool.importlinter.contracts]]

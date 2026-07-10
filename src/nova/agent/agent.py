@@ -2,32 +2,49 @@
 runs synchronously on the AgentWorker thread; `cancel()` is safe to call directly from any
 thread (see `AgentCancelled` below).
 
-M2 has no tools: `ProviderManager.generate()` is always called with `tools=[]`, so `Router`
-(constructed with an empty known-tool-name set) can only ever return `DirectAnswer` or
-`RepairRoute` — never `ToolRoute`. Every `RepairRoute` consumes one loop iteration and
-appends a corrective tool-error message, exactly like a real repair round-trip would
-(docs/06 §6) — exhausting `max_iterations` without ever reaching a `DirectAnswer` is
-uniformly "iteration cap hit" (ERROR event + apology). docs/06 §6 also describes a softer
-"repair also fails, no ERROR" outcome as if distinct from cap-hit; with M2's permanently-
-empty tool registry there's no way to reach that outcome differently from cap-hit, so this
-collapses the two into one mechanism (a judgment call — see docs/ai/MEMORY.md) — revisit
-once M3's real multi-step tool loop makes a meaningful distinction possible.
+M3: real tool iterations. `ProviderManager.generate()` receives the registry's schemas;
+a `ToolRoute` dispatches sequentially through the `Executor` (validate -> confirm -> run ->
+normalize), results are fed back as `tool`-role messages, and the loop continues until a
+`DirectAnswer` or the iteration cap (FR-17).
 """
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import UTC, datetime
 from typing import Any
 
-from nova.agent.planner import Planner
+from nova.agent.executor import Executor
+from nova.agent.planner import Planner, thinking_summary
 from nova.agent.router import DirectAnswer, RepairRoute, Router, ToolRoute
 from nova.agent.state import ConversationState
 from nova.core.errors import ProviderError, SafetyBlocked
 from nova.core.events import EventBus, EventStatus, PipelineEvent, PipelineStage
-from nova.core.models import AssistantReply, ChatMessage, UserInput
+from nova.core.models import AssistantReply, ChatMessage, ToolResult, UserInput
 from nova.providers.base import GenerateOptions
 from nova.providers.manager import ProviderManager
+from nova.tools.registry import ToolRegistry
+
+_MAX_TOOL_RESULT_CHARS = 1024  # docs/06 §5: larger results are summarized before appending
+
+
+def _result_envelope(result: ToolResult) -> str:
+    """The uniform error envelope / ok payload fed back to the LLM (docs/11 §3.1, §6)."""
+    if result.status == "ok":
+        data = result.data or {}
+        text = json.dumps({"status": "ok", "data": data})
+        if len(text) > _MAX_TOOL_RESULT_CHARS:
+            text = json.dumps({"status": "ok", "data": {"summary": data.get("summary", "")}})
+        return text
+    return json.dumps(
+        {
+            "status": result.status,
+            "error_code": result.error_code,
+            "error_message": result.error_message,
+        }
+    )
+
 
 _SAFETY_REFUSAL_TEXT = "I don't think I should talk about that — let's chat about something else!"
 _CANT_REACH_BRAIN_TEXT = "I can't reach my brain right now — is the internet on?"
@@ -54,6 +71,8 @@ class Agent:
         router: Router,
         state: ConversationState,
         bus: EventBus,
+        registry: ToolRegistry | None = None,
+        executor: Executor | None = None,
         opts: GenerateOptions | None = None,
     ) -> None:
         self._provider_manager = provider_manager
@@ -61,8 +80,19 @@ class Agent:
         self._router = router
         self._state = state
         self._bus = bus
+        self._registry = registry or ToolRegistry()
+        self._executor = executor
         self._opts = opts or GenerateOptions()
         self._cancel_requested = False
+
+    def confirm(self, call_id: str, approved: bool) -> None:
+        """Answer a pending sensitive-tool confirmation (docs/11 §4).
+
+        Like `cancel()`, must arrive as a direct call from the main thread — the worker
+        thread is blocked inside the Executor's gate waiting for it.
+        """
+        if self._executor is not None:
+            self._executor.resolve_confirmation(call_id, approved)
 
     def cancel(self) -> None:
         """Request cancellation of whichever request is currently in `handle()`.
@@ -100,7 +130,7 @@ class Agent:
         history = self._state.snapshot()
         messages = self._planner.build(user_input, history)
 
-        final_text = self._run_loop(request_id, messages)
+        final_text, used_tools = self._run_loop(request_id, messages)
 
         thinking_ms = int((time.monotonic() - thinking_started) * 1000)
         self._emit(
@@ -111,10 +141,17 @@ class Agent:
             {"duration_ms": thinking_ms},
         )
 
-        # No tools exist until M3 -> this trio never actually runs in M2's loop.
-        self._emit(request_id, PipelineStage.SELECTING_TOOL, EventStatus.SKIPPED, "Choosing a tool")
-        self._emit(request_id, PipelineStage.EXECUTING, EventStatus.SKIPPED, "Doing it on your PC")
-        self._emit(request_id, PipelineStage.OBSERVING, EventStatus.SKIPPED, "Checking the result")
+        if not used_tools:
+            # Direct answer: the tool trio didn't run — say so honestly (skipped, not faked).
+            self._emit(
+                request_id, PipelineStage.SELECTING_TOOL, EventStatus.SKIPPED, "Choosing a tool"
+            )
+            self._emit(
+                request_id, PipelineStage.EXECUTING, EventStatus.SKIPPED, "Doing it on your PC"
+            )
+            self._emit(
+                request_id, PipelineStage.OBSERVING, EventStatus.SKIPPED, "Checking the result"
+            )
 
         # No MemoryService yet (M5) -> Agent itself is a valid emitter for this stage
         # (docs/03 §7.1, docs/06 §1) and there's never anything to actually store.
@@ -141,14 +178,18 @@ class Agent:
 
         return reply
 
-    def _run_loop(self, request_id: str, messages: list[ChatMessage]) -> str:
+    def _run_loop(self, request_id: str, messages: list[ChatMessage]) -> tuple[str, bool]:
+        """Returns (final_text, used_tools)."""
+        used_tools = False
+        schemas = self._registry.schemas()
+
         for _iteration in range(1, self._state.max_iterations + 1):
             self._raise_if_cancelled()
 
             try:
-                response = self._provider_manager.generate(messages, [], self._opts)
+                response = self._provider_manager.generate(messages, schemas, self._opts)
             except SafetyBlocked:
-                return _SAFETY_REFUSAL_TEXT
+                return _SAFETY_REFUSAL_TEXT, used_tools
             except ProviderError:
                 self._emit(
                     request_id,
@@ -157,15 +198,15 @@ class Agent:
                     _CANT_REACH_BRAIN_TEXT,
                     {"error_code": "provider_unavailable"},
                 )
-                return _CANT_REACH_BRAIN_TEXT
+                return _CANT_REACH_BRAIN_TEXT, used_tools
 
             if response.finish_reason == "safety" and not response.text:
-                return _SAFETY_REFUSAL_TEXT
+                return _SAFETY_REFUSAL_TEXT, used_tools
 
             route = self._router.route(response)
 
             if isinstance(route, DirectAnswer):
-                return route.text
+                return route.text, used_tools
 
             if isinstance(route, RepairRoute):
                 messages.append(
@@ -180,10 +221,10 @@ class Agent:
                 continue
 
             if isinstance(route, ToolRoute):
-                # Unreachable in M2: Router is always constructed with known_tool_names=
-                # frozenset(), so route() can never classify a call as "known". M3 replaces
-                # this branch with real Executor dispatch once tools exist.
-                raise AssertionError("ToolRoute is unreachable before M3's Executor exists")
+                if self._executor is None:  # defensive: registry without executor is a bug
+                    raise AssertionError("ToolRoute reached without an Executor wired in")
+                used_tools = True
+                self._dispatch_tools(request_id, messages, response.text, route)
 
         self._emit(
             request_id,
@@ -192,7 +233,63 @@ class Agent:
             _TOO_COMPLICATED_TEXT,
             {"error_code": "iteration_cap"},
         )
-        return _TOO_COMPLICATED_TEXT
+        return _TOO_COMPLICATED_TEXT, used_tools
+
+    def _dispatch_tools(
+        self,
+        request_id: str,
+        messages: list[ChatMessage],
+        prose: str | None,
+        route: ToolRoute,
+    ) -> None:
+        """One tool iteration: SELECTING_TOOL -> Executor per call (sequential) -> OBSERVING."""
+        assert self._executor is not None
+        first = self._registry.get(route.calls[0].tool_name)
+        assert first is not None  # Router only routes known names
+        summary = thinking_summary(prose, first.spec.title)
+        selecting_payload = {
+            "tool_name": first.spec.name,
+            "tool_title": first.spec.title,
+            "icon": first.spec.icon,
+        }
+        self._emit(
+            request_id,
+            PipelineStage.SELECTING_TOOL,
+            EventStatus.STARTED,
+            summary,
+            selecting_payload,
+        )
+        self._emit(
+            request_id,
+            PipelineStage.SELECTING_TOOL,
+            EventStatus.COMPLETED,
+            summary,
+            selecting_payload,
+        )
+
+        messages.append(ChatMessage(role="assistant", content=prose, tool_calls=route.calls))
+
+        results: list[ToolResult] = []
+        for call in route.calls:
+            self._raise_if_cancelled()
+            results.append(self._executor.execute(call, request_id))
+
+        self._emit(request_id, PipelineStage.OBSERVING, EventStatus.STARTED, "Checking the result")
+        observing_started = time.monotonic()
+        for call, result in zip(route.calls, results, strict=True):
+            messages.append(
+                ChatMessage(
+                    role="tool", content=_result_envelope(result), tool_call_id=call.call_id
+                )
+            )
+        ok = sum(1 for result in results if result.status == "ok")
+        self._emit(
+            request_id,
+            PipelineStage.OBSERVING,
+            EventStatus.COMPLETED,
+            "Got the result!" if ok == len(results) else "Something didn't work — telling you",
+            {"duration_ms": int((time.monotonic() - observing_started) * 1000)},
+        )
 
     def _raise_if_cancelled(self) -> None:
         if self._cancel_requested:

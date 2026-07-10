@@ -7,11 +7,13 @@ reasoning all live elsewhere — this module is wiring only.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread
 from PySide6.QtWidgets import QApplication
 
 from nova.agent.agent import Agent
+from nova.agent.executor import Executor
 from nova.agent.planner import Planner, load_system_prompt
 from nova.agent.router import Router
 from nova.agent.state import ConversationState
@@ -32,6 +34,15 @@ from nova.providers.base import LLMProvider
 from nova.providers.gemini import GeminiProvider
 from nova.providers.groq import GroqProvider
 from nova.providers.manager import ProviderManager
+from nova.tools.app_launcher import AppLauncherTool
+from nova.tools.base import ToolContext
+from nova.tools.browser import BrowserTool
+from nova.tools.calculator import CalculatorTool
+from nova.tools.desktop_organizer import DesktopOrganizerTool
+from nova.tools.file_search import FileSearchTool
+from nova.tools.memory_tool import InMemoryFacade, MemoryTool
+from nova.tools.registry import ToolRegistry
+from nova.tools.weather import WeatherTool
 from nova.ui.main_window import MainWindow
 from nova.ui.theme import build_stylesheet
 
@@ -57,6 +68,25 @@ def _build_providers(secrets: Secrets, settings: Settings) -> dict[str, LLMProvi
     return providers
 
 
+def _build_registry(secrets: Secrets, settings: Settings, data_dir: Path) -> ToolRegistry:
+    """Register all seven v1.0 tools (docs/07). Order = SELECTING_TOOL display order."""
+    desktop = (
+        Path(secrets.desktop_override) if secrets.desktop_override else (Path.home() / "Desktop")
+    )
+    raw_extra = settings.model_extra or {}
+    blocked = (raw_extra.get("browser") or {}).get("blocked_domains") or []
+
+    registry = ToolRegistry()
+    registry.register(CalculatorTool())
+    registry.register(WeatherTool())
+    registry.register(BrowserTool(blocked_domains=blocked))
+    registry.register(AppLauncherTool())
+    registry.register(FileSearchTool())
+    registry.register(DesktopOrganizerTool(desktop=desktop, manifest_dir=data_dir))
+    registry.register(MemoryTool())
+    return registry
+
+
 def main() -> int:
     """Build and run the app. Returns the process exit code."""
     install_excepthook()  # active before anything else can go wrong
@@ -79,12 +109,18 @@ def main() -> int:
     provider_manager = ProviderManager(
         _build_providers(secrets, settings), settings.provider.active
     )
+    registry = _build_registry(secrets, settings, data_dir)
+    # ponytail: InMemoryFacade is the M3 stub — M5's MemoryService replaces it (same protocol)
+    tool_ctx = ToolContext(settings=settings, memory=InMemoryFacade())
+    executor = Executor(registry, bus, tool_ctx, tool_timeout_s=settings.advanced.tool_timeout_s)
     agent = Agent(
         provider_manager,
         Planner(load_system_prompt()),
-        Router(),
+        Router(known_tool_names=registry.names),
         ConversationState(max_iterations=settings.advanced.max_iterations),
         bus,
+        registry=registry,
+        executor=executor,
     )
     worker = AgentWorker(agent)
     agent_thread = QThread()
@@ -101,6 +137,9 @@ def main() -> int:
     # own event queue until that blocking call returns, defeating cancellation (see
     # AgentWorker.cancel_current's docstring).
     window.cancel_requested.connect(worker.cancel_current, Qt.ConnectionType.DirectConnection)
+    # Same reasoning as cancel: the worker thread is *blocked* inside the Executor's
+    # confirmation gate — the answer must arrive as a direct call, not a queued slot.
+    window.confirmation_answered.connect(worker.confirm, Qt.ConnectionType.DirectConnection)
 
     provider_manager.status_changed.connect(window.set_provider_status)
 

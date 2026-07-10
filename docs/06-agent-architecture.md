@@ -125,7 +125,7 @@ Provider adapters translate to/from native formats (Gemini `contents`/`functionC
 
 Every row ends in a conversational reply (A-6) — errors are teachable moments (EO-7).
 
-**M2 note:** with no tools registered yet, every `RepairRoute` is structurally a defensive path (a provider hallucinating a call despite an empty tool list) rather than a real invalid-argument repair, so "repair also fails" and "iteration cap hit" collapse onto the same mechanism until M3's tools give them independently reachable outcomes — see docs/ai/MEMORY.md.
+**M3 note (supersedes the M2 note):** with real tools registered, `RepairRoute` covers unknown tool names, while *invalid arguments* are handled one level down — the Executor returns a `ToolResult(status="error", error_code="invalid_args")` whose flattened Pydantic error list is fed back to the LLM as the corrective message. Both drive the same "one more iteration" recovery.
 
 ## 7. Concurrency & Cancellation
 

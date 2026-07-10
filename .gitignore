@@ -55,3 +55,7 @@ desktop.ini
 
 # --- Build artifacts ---
 *.spec
+
+# local tooling artifacts
+.obsidian/
+graphify-out/

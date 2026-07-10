@@ -217,3 +217,48 @@ def test_set_provider_status_down_mode_uses_error_color(window: MainWindow) -> N
     )
     assert window._status_label.text() == "I can't reach my brain right now"
     assert Color.STATE_ERROR in window._status_label.styleSheet()
+
+
+class TestConfirmationGateWiring:
+    """AWAITING_CONFIRMATION started -> dialog -> confirmation_answered (FR-20, M3)."""
+
+    def _emit_confirmation_event(self, bus: EventBus) -> None:
+        from datetime import UTC, datetime
+
+        from nova.core.events import EventStatus, PipelineEvent
+
+        bus.publish(
+            PipelineEvent(
+                request_id="req_c",
+                stage=PipelineStage.AWAITING_CONFIRMATION,
+                status=EventStatus.STARTED,
+                detail="Asking your permission",
+                payload={
+                    "call_id": "call_9",
+                    "detail": "Tidying up your Desktop",
+                    "preview": ["Move a.png into Pictures"],
+                },
+                ts=datetime.now(UTC),
+            )
+        )
+
+    @pytest.mark.parametrize("accepted", [True, False])
+    def test_dialog_answer_is_emitted_with_call_id(
+        self, qtbot: object, monkeypatch: pytest.MonkeyPatch, accepted: bool
+    ) -> None:
+        from PySide6.QtWidgets import QDialog
+
+        from nova.ui.widgets.confirm_dialog import ConfirmDialog
+
+        bus = EventBus()
+        window = MainWindow(bus, Settings())
+        qtbot.addWidget(window)  # type: ignore[attr-defined]
+        code = QDialog.DialogCode.Accepted if accepted else QDialog.DialogCode.Rejected
+        monkeypatch.setattr(ConfirmDialog, "exec", lambda self: code)
+
+        answers: list[tuple[str, bool]] = []
+        window.confirmation_answered.connect(lambda cid, ok: answers.append((cid, ok)))
+
+        self._emit_confirmation_event(bus)
+
+        assert answers == [("call_9", accepted)]
