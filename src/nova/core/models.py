@@ -89,6 +89,20 @@ class ToolSchema:
 
 
 @dataclass(frozen=True)
+class AudioDeviceInfo:
+    """One enumerated input/output audio device (docs/08 §5, FR-12).
+
+    Lives in `core`, not `speech`, for the same reason as `ProviderStatus`: `ui` needs this
+    shape for the Settings device dropdowns but can never import `speech` (D-5) — `speech`
+    and `ui` are sibling/parent layers that must agree on a shape without either importing
+    the other (ARCHITECTURE_RULES.md's "cross-layer data shape" row).
+    """
+
+    index: int
+    name: str
+
+
+@dataclass(frozen=True)
 class ProviderStatus:
     """The active LLM provider's health, for the header status cluster (FR-43).
 

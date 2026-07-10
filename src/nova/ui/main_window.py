@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 from nova.core.config import Settings
 from nova.core.events import EventBus, EventStatus, PipelineEvent, PipelineStage
 from nova.core.ids import new_request_id
-from nova.core.models import AssistantReply, ProviderStatus, UserInput
+from nova.core.models import AssistantReply, ProviderStatus, Transcript, UserInput
 from nova.ui import theme
 from nova.ui.debug_emitter import emit_fake_pipeline
 from nova.ui.theme import Color, Spacing
@@ -45,6 +45,8 @@ _INPUT_BAR_HEIGHT = 64
 _MIC_BUTTON_SIZE = 64
 _DEFAULT_PLACEHOLDER = "Type or press the mic to talk…"
 _AWAITING_PLACEHOLDER = "One moment…"
+_LISTENING_PLACEHOLDER = "Listening…"
+_DIDNT_CATCH_TEXT = "I didn't catch that — try again?"
 _NAV_ICONS: tuple[tuple[str, str], ...] = (
     ("house", "Home"),
     ("history", "History"),
@@ -66,11 +68,19 @@ class MainWindow(QMainWindow):
     submit_requested = Signal(object)  # UserInput
     cancel_requested = Signal()
     confirmation_answered = Signal(str, bool)  # call_id, approved (FR-20)
+    mic_pressed = Signal(object)  # device: int | None — start listening (M4)
+    mic_repressed = Signal()  # re-press while listening: stop capturing, transcribe buffered
+    listening_cancelled = Signal()  # Esc while listening: discard, no STT (docs/08 §2)
+    stop_speaking_requested = Signal()  # speaker glyph / mic press / new input (FR-13)
 
     def __init__(self, bus: EventBus, settings: Settings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._bus = bus
+        self._settings = settings
         self._awaiting_reply = False
+        self._listening = False
+        self._explicit_cancel = False
+        self._mic_available = True
         self.setWindowTitle("NOVA")
         self.resize(*_WINDOW_SIZE)
         self.setMinimumSize(*_MIN_WINDOW_SIZE)
@@ -84,6 +94,7 @@ class MainWindow(QMainWindow):
         root.addWidget(self._build_header())
 
         self._chat_view = ChatView()
+        self._chat_view.stop_speech_requested.connect(self.stop_speaking_requested)
         splitter = QSplitter(Qt.Orientation.Horizontal, central)
         splitter.addWidget(self._chat_view)
         self._pipeline_view = PipelineView(bus, splitter)
@@ -136,6 +147,11 @@ class MainWindow(QMainWindow):
         """`app.py`'s wiring surface for provider selection, key entry, and Test (T-209)."""
         return self._settings_view
 
+    @property
+    def pipeline_view(self) -> PipelineView:
+        """`app.py`'s wiring surface for `SpeechInWorker.listening_level` (M4, T-401)."""
+        return self._pipeline_view
+
     # ── header ───────────────────────────────────────────────────────
 
     def _build_header(self) -> QWidget:
@@ -161,6 +177,13 @@ class MainWindow(QMainWindow):
         self._status_label.setFont(theme.font(theme.FontRole.CAPTION))
         self._status_label.setStyleSheet(f"color: {Color.TEXT_SECONDARY};")
         layout.addWidget(self._status_label, 1)
+
+        # docs/08 §4: "Voice: offline" status when pocket-tts fails and pyttsx3 is in use.
+        self._voice_status_label = QLabel("· Voice: backup", header)
+        self._voice_status_label.setFont(theme.font(theme.FontRole.CAPTION))
+        self._voice_status_label.setStyleSheet(f"color: {Color.STATE_WARNING};")
+        self._voice_status_label.setVisible(False)
+        layout.addWidget(self._voice_status_label)
 
         self._debug_button = QPushButton("▶ Run demo pipeline", header)
         self._debug_button.setToolTip(
@@ -207,6 +230,10 @@ class MainWindow(QMainWindow):
         color = _STATUS_COLOR_FOR_MODE[status.mode]
         self._status_label.setStyleSheet(f"color: {color};")
 
+    def set_voice_mode(self, mode: str) -> None:
+        """Connect to `SpeechOutWorker`'s tts-mode notifications (docs/08 §4) from `app.py`."""
+        self._voice_status_label.setVisible(mode == "offline")
+
     def _on_debug_button_clicked(self) -> None:
         self._debug_button.setEnabled(False)
         self._debug_button.setText("▶ Running…")
@@ -226,12 +253,11 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(Spacing.MD, Spacing.SM, Spacing.MD, Spacing.SM)
         layout.setSpacing(Spacing.MD)
 
-        mic_button = QPushButton(bar)
-        mic_button.setIcon(theme.load_icon("mic", Color.TEXT_SECONDARY, size=24))
-        mic_button.setFixedSize(_MIC_BUTTON_SIZE, _MIC_BUTTON_SIZE)
-        mic_button.setEnabled(False)  # voice input lands in M4
-        mic_button.setToolTip("Voice input (coming soon)")
-        layout.addWidget(mic_button)
+        self._mic_button = QPushButton(bar)
+        self._mic_button.setFixedSize(_MIC_BUTTON_SIZE, _MIC_BUTTON_SIZE)
+        self._mic_button.clicked.connect(self._on_mic_clicked)
+        self._set_mic_visual(listening=False)
+        layout.addWidget(self._mic_button)
 
         self._entry = QLineEdit(bar)
         self._entry.setPlaceholderText(_DEFAULT_PLACEHOLDER)
@@ -250,6 +276,7 @@ class MainWindow(QMainWindow):
         if not text or self._awaiting_reply:
             return
 
+        self.stop_speaking_requested.emit()  # FR-13: submitting new input stops speech
         self._chat_view.add_user_message(text)
         self._entry.clear()
 
@@ -263,6 +290,74 @@ class MainWindow(QMainWindow):
         """Connect to `AgentWorker.reply_ready` (queued, cross-thread) from `app.py`."""
         self._chat_view.add_nova_message(reply.text)
         self._set_awaiting_reply(False)
+
+    # ── voice (M4) ───────────────────────────────────────────────────
+
+    def _on_mic_clicked(self) -> None:
+        if self._listening:
+            self.mic_repressed.emit()
+            return
+        if self._awaiting_reply:
+            return
+        self.stop_speaking_requested.emit()  # FR-13: pressing mic also stops any speech
+        self._set_listening(True)
+        self.mic_pressed.emit(self._settings.voice.input_device)
+
+    def on_transcript_ready(self, transcript: Transcript) -> None:
+        """Connect to `SpeechInWorker.transcript_ready` (queued, cross-thread) from `app.py`."""
+        self._set_listening(False)
+        explicit_cancel, self._explicit_cancel = self._explicit_cancel, False
+
+        text = transcript.text.strip()
+        if not text:
+            if not explicit_cancel:  # Esc is a silent discard; anything else gets a nudge
+                self._chat_view.add_nova_message(_DIDNT_CATCH_TEXT)
+            return
+
+        # FR-8: the transcript is shown before the agent acts, so a mistranscription is
+        # visible, not silent.
+        self._chat_view.add_user_message(text)
+        user_input = UserInput(
+            request_id=transcript.request_id, text=text, source="voice", ts=datetime.now(UTC)
+        )
+        self._set_awaiting_reply(True)
+        self.submit_requested.emit(user_input)
+
+    def on_listen_failed(self, friendly_message: str) -> None:
+        """Connect to `SpeechInWorker.failed` (queued, cross-thread) from `app.py` — last-
+        resort safety net; `SpeechService` itself handles every documented failure without
+        raising."""
+        self._set_listening(False)
+        self._chat_view.add_nova_message(friendly_message)
+
+    def set_mic_available(self, available: bool) -> None:
+        """Called once at startup from `app.py` after enumerating input devices (FR-12)."""
+        self._mic_available = available
+        self._mic_button.setEnabled(available and not self._awaiting_reply)
+        if not available:
+            self._mic_button.setToolTip("I can't hear right now — you can type to me!")
+        else:
+            self._set_mic_visual(self._listening)
+
+    def _set_listening(self, listening: bool) -> None:
+        self._listening = listening
+        self._entry.setEnabled(not listening and not self._awaiting_reply)
+        self._send_button.setEnabled(not listening and not self._awaiting_reply)
+        if listening:
+            self._entry.setPlaceholderText(_LISTENING_PLACEHOLDER)
+        else:
+            self._entry.setPlaceholderText(
+                _AWAITING_PLACEHOLDER if self._awaiting_reply else _DEFAULT_PLACEHOLDER
+            )
+        self._set_mic_visual(listening)
+
+    def _set_mic_visual(self, listening: bool) -> None:
+        if listening:
+            self._mic_button.setIcon(theme.load_icon("mic", theme.accent_hex("cyan"), size=24))
+            self._mic_button.setToolTip("Listening… (click to stop)")
+        else:
+            self._mic_button.setIcon(theme.load_icon("mic", Color.TEXT_SECONDARY, size=24))
+            self._mic_button.setToolTip("Press to talk")
 
     def on_request_failed(self, request_id: str, friendly_message: str) -> None:
         """Connect to `AgentWorker.failed` (queued, cross-thread) from `app.py`."""
@@ -289,9 +384,15 @@ class MainWindow(QMainWindow):
         self._entry.setEnabled(not awaiting)
         self._send_button.setEnabled(not awaiting)
         self._entry.setPlaceholderText(_AWAITING_PLACEHOLDER if awaiting else _DEFAULT_PLACEHOLDER)
+        self._mic_button.setEnabled(self._mic_available and not awaiting)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt override
-        if event.key() == Qt.Key.Key_Escape and self._awaiting_reply:
-            self.cancel_requested.emit()
-            return
+        if event.key() == Qt.Key.Key_Escape:
+            if self._listening:
+                self._explicit_cancel = True
+                self.listening_cancelled.emit()
+                return
+            if self._awaiting_reply:
+                self.cancel_requested.emit()
+                return
         super().keyPressEvent(event)

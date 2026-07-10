@@ -45,8 +45,27 @@ def test_nova_bubble_is_left_aligned(qtbot: object) -> None:
     bubble = MessageBubble("hi", role="nova")
     qtbot.addWidget(bubble)  # type: ignore[attr-defined]
     layout = bubble.layout()
-    assert layout.itemAt(0).widget() is bubble._label
+    # wrapped in a `content` widget (alongside the speaker glyph row) rather than the bare
+    # label directly — see test_nova_bubble_has_a_speaker_glyph_that_stops_speech below.
+    content = layout.itemAt(0).widget()
+    assert content is not None
+    assert content.layout().itemAt(0).widget() is bubble._label
     assert layout.itemAt(1).widget() is None  # trailing stretch keeps it left
+
+
+def test_user_bubble_has_no_speaker_glyph(qtbot: object) -> None:
+    bubble = MessageBubble("hi", role="user")
+    qtbot.addWidget(bubble)  # type: ignore[attr-defined]
+
+    assert not hasattr(bubble, "_speaker_button")
+
+
+def test_nova_bubble_has_a_speaker_glyph_that_stops_speech(qtbot: object) -> None:
+    bubble = MessageBubble("hi", role="nova")
+    qtbot.addWidget(bubble)  # type: ignore[attr-defined]
+
+    with qtbot.waitSignal(bubble.stop_speech_requested, timeout=1000):  # type: ignore[attr-defined]
+        bubble._speaker_button.click()
 
 
 def test_set_max_bubble_width_constrains_to_72_percent(qtbot: object) -> None:

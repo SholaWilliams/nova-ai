@@ -26,14 +26,21 @@ from nova.core.config import (
     save_settings,
     write_secret_to_env,
 )
-from nova.core.errors import install_excepthook
+from nova.core.errors import SpeechError, install_excepthook
 from nova.core.events import EventBus
 from nova.core.logging import EventLogBridge, register_secrets, setup_logging
-from nova.core.models import ProviderStatus
+from nova.core.models import ProviderStatus, Transcript
 from nova.providers.base import LLMProvider
 from nova.providers.gemini import GeminiProvider
 from nova.providers.groq import GroqProvider
 from nova.providers.manager import ProviderManager
+from nova.speech.audio import AudioCapture, list_input_devices, list_output_devices
+from nova.speech.service import SpeechService
+from nova.speech.stt.base import STTEngine
+from nova.speech.stt.groq_whisper import GroqSTTEngine
+from nova.speech.tts.pocket_tts import PocketTTSEngine
+from nova.speech.tts.pyttsx3_engine import Pyttsx3Engine
+from nova.speech.worker import SpeechInWorker, SpeechOutWorker
 from nova.tools.app_launcher import AppLauncherTool
 from nova.tools.base import ToolContext
 from nova.tools.browser import BrowserTool
@@ -48,6 +55,23 @@ from nova.ui.theme import build_stylesheet
 
 _ENV_KEY_NAMES = {"gemini": "NOVA_GEMINI_API_KEY", "groq": "NOVA_GROQ_API_KEY"}
 _PROVIDER_LABELS = {"gemini": "Gemini", "groq": "Groq"}
+_NO_STT_KEY_MESSAGE = "I can't hear right now — you can type to me!"
+
+
+class _NoKeySTTEngine(STTEngine):
+    """Placeholder when no Groq key is configured (TD-5: STT reuses the Groq key).
+
+    `window.set_mic_available(False)` keeps the mic button disabled whenever this is in use,
+    so `transcribe()` should never actually be reached — it exists purely so `SpeechService`
+    always has a real `STTEngine` to construct with, mirroring `ProviderManager` always being
+    buildable even with zero configured providers.
+    """
+
+    def transcribe(self, request_id: str, pcm: bytes, sample_rate: int) -> Transcript:
+        del request_id, pcm, sample_rate
+        raise SpeechError(
+            "no Groq API key configured for STT", friendly_message=_NO_STT_KEY_MESSAGE
+        )
 
 
 def _build_provider(name: str, secrets: Secrets, settings: Settings) -> LLMProvider | None:
@@ -85,6 +109,22 @@ def _build_registry(secrets: Secrets, settings: Settings, data_dir: Path) -> Too
     registry.register(DesktopOrganizerTool(desktop=desktop, manifest_dir=data_dir))
     registry.register(MemoryTool())
     return registry
+
+
+def _build_speech_service(secrets: Secrets, settings: Settings, bus: EventBus) -> SpeechService:
+    """docs/08 §1: engines behind ABCs, real pipeline events on the same bus as the agent."""
+    stt_engine: STTEngine = (
+        GroqSTTEngine(api_key=secrets.groq_api_key) if secrets.groq_api_key else _NoKeySTTEngine()
+    )
+    return SpeechService(
+        stt_engine=stt_engine,
+        primary_tts=PocketTTSEngine(),
+        fallback_tts=Pyttsx3Engine(),
+        audio_capture_factory=AudioCapture,
+        bus=bus,
+        vad_settings=settings.advanced.vad,
+        voice_settings=settings.voice,
+    )
 
 
 def main() -> int:
@@ -141,6 +181,46 @@ def main() -> int:
     # confirmation gate — the answer must arrive as a direct call, not a queued slot.
     window.confirmation_answered.connect(worker.confirm, Qt.ConnectionType.DirectConnection)
 
+    # M4: two more dedicated worker threads (docs/03 §5), the exact AgentWorker cross-thread
+    # idiom applied twice more rather than a new one (TD-3).
+    speech_service = _build_speech_service(secrets, settings, bus)
+    speech_in_worker = SpeechInWorker(speech_service)
+    speech_in_thread = QThread()
+    speech_in_worker.moveToThread(speech_in_thread)
+    speech_in_thread.start()
+
+    speech_out_worker = SpeechOutWorker(speech_service)
+    speech_out_thread = QThread()
+    speech_out_worker.moveToThread(speech_out_thread)
+    # Runs once, as soon as this worker's thread starts its event loop — well ahead of the
+    # first real request (see SpeechService.warm_up_tts's docstring for why this matters).
+    speech_out_thread.started.connect(speech_out_worker.warm_up)
+    speech_out_thread.start()
+
+    speech_service.set_listening_level_callback(speech_in_worker.listening_level.emit)
+    speech_service.set_tts_mode_callback(speech_out_worker.tts_mode_changed.emit)
+
+    window.mic_pressed.connect(speech_in_worker.listen_request)
+    speech_in_worker.transcript_ready.connect(window.on_transcript_ready)
+    speech_in_worker.failed.connect(window.on_listen_failed)
+    # Direct, not queued — same reasoning as cancel_current/confirm above: the SpeechIn
+    # thread is blocked inside `listen()`'s loop when these need to land.
+    window.mic_repressed.connect(speech_in_worker.end_listening, Qt.ConnectionType.DirectConnection)
+    window.listening_cancelled.connect(
+        speech_in_worker.cancel_listening, Qt.ConnectionType.DirectConnection
+    )
+
+    worker.reply_ready.connect(speech_out_worker.speak_request)
+    speech_out_worker.tts_mode_changed.connect(window.set_voice_mode)
+    # Direct, not queued — the SpeechOut thread is blocked inside `speak()` when this lands.
+    window.stop_speaking_requested.connect(
+        speech_out_worker.stop_speaking, Qt.ConnectionType.DirectConnection
+    )
+
+    speech_in_worker.listening_level.connect(window.pipeline_view.set_audio_level)
+
+    window.set_mic_available(bool(secrets.groq_api_key) and bool(list_input_devices()))
+
     provider_manager.status_changed.connect(window.set_provider_status)
 
     def _refresh_provider_status(name: str) -> None:
@@ -182,6 +262,32 @@ def main() -> int:
     window.settings_view.key_changed.connect(_on_key_changed)
     window.settings_view.test_requested.connect(_on_test_requested)
 
+    # `settings.voice` is the exact object `speech_service` was built with (same reference,
+    # not a copy) — mutating it in place here is all `SpeechService` needs to pick the
+    # change up on its next `listen()`/`speak()` call; no separate push required.
+    def _on_tts_enabled_changed(enabled: bool) -> None:
+        settings.voice.tts_enabled = enabled
+        save_settings(settings, data_dir / "settings.json")
+
+    def _on_voice_changed(voice: str) -> None:
+        settings.voice.voice = voice
+        save_settings(settings, data_dir / "settings.json")
+
+    def _on_input_device_changed(device: int | None) -> None:
+        settings.voice.input_device = device
+        save_settings(settings, data_dir / "settings.json")
+
+    def _on_output_device_changed(device: int | None) -> None:
+        settings.voice.output_device = device
+        save_settings(settings, data_dir / "settings.json")
+
+    window.settings_view.tts_enabled_changed.connect(_on_tts_enabled_changed)
+    window.settings_view.voice_changed.connect(_on_voice_changed)
+    window.settings_view.input_device_changed.connect(_on_input_device_changed)
+    window.settings_view.output_device_changed.connect(_on_output_device_changed)
+    window.settings_view.set_input_devices(list_input_devices())
+    window.settings_view.set_output_devices(list_output_devices())
+
     for name in ("gemini", "groq"):
         window.settings_view.set_key_configured(name, name in provider_manager.configured_names)
 
@@ -192,11 +298,12 @@ def main() -> int:
             "No API key configured yet — add one below to start chatting."
         )
 
-    def _shutdown_agent_thread() -> None:
-        agent_thread.quit()
-        agent_thread.wait()
+    def _shutdown_worker_threads() -> None:
+        for thread in (agent_thread, speech_in_thread, speech_out_thread):
+            thread.quit()
+            thread.wait()
 
-    app.aboutToQuit.connect(_shutdown_agent_thread)
+    app.aboutToQuit.connect(_shutdown_worker_threads)
 
     window.show()
 

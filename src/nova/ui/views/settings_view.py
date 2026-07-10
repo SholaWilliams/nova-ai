@@ -19,6 +19,8 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QCheckBox,
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -29,10 +31,46 @@ from PySide6.QtWidgets import (
 )
 
 from nova.core.config import Settings
+from nova.core.models import AudioDeviceInfo
 from nova.ui import theme
 from nova.ui.theme import Color, Radius, Spacing
 
 _PROVIDER_LABELS = {"gemini": "Gemini", "groq": "Groq"}
+
+# pocket-tts's built-in, non-gated voice catalog (docs/04 TD-6 revision, confirmed against
+# the installed package — voice-cloning hf:// URLs need gated HF access, these plain names
+# don't). Hardcoded here (not imported from `nova.speech`) because `ui` imports core only
+# (D-5) — this is display data, not behavior, so a local copy is the honest answer, not a
+# layering workaround.
+_VOICE_CATALOG = (
+    "cosette",
+    "marius",
+    "javert",
+    "alba",
+    "jean",
+    "anna",
+    "vera",
+    "fantine",
+    "charles",
+    "paul",
+    "eponine",
+    "azelma",
+    "george",
+    "mary",
+    "jane",
+    "michael",
+    "eve",
+    "bill_boerst",
+    "peter_yearsley",
+    "stuart_bell",
+    "caro_davy",
+    "giovanni",
+    "lola",
+    "juergen",
+    "rafael",
+    "estelle",
+)
+_SYSTEM_DEFAULT_DEVICE = "System default"
 
 
 class _KeyRow(QWidget):
@@ -119,6 +157,10 @@ class SettingsView(QWidget):
     provider_selected = Signal(str)  # "gemini" | "groq"
     key_changed = Signal(str, str)  # provider_name, new_value
     test_requested = Signal(str)  # provider_name
+    tts_enabled_changed = Signal(bool)
+    voice_changed = Signal(str)
+    input_device_changed = Signal(object)  # int | None
+    output_device_changed = Signal(object)  # int | None
 
     def __init__(self, settings: Settings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -138,6 +180,7 @@ class SettingsView(QWidget):
         layout.addWidget(self._banner)
 
         layout.addWidget(self._build_brain_section(settings))
+        layout.addWidget(self._build_voice_section(settings))
         layout.addStretch(1)
 
     def _build_brain_section(self, settings: Settings) -> QWidget:
@@ -172,6 +215,69 @@ class SettingsView(QWidget):
             section_layout.addWidget(row)
 
         return section
+
+    def _build_voice_section(self, settings: Settings) -> QWidget:
+        section = QWidget(self)
+        section.setObjectName("surface")
+        section_layout = QVBoxLayout(section)
+        section_layout.setContentsMargins(Spacing.MD, Spacing.MD, Spacing.MD, Spacing.MD)
+        section_layout.setSpacing(Spacing.MD)
+
+        title = QLabel("Voice", section)
+        title.setFont(theme.font(theme.FontRole.DISPLAY))
+        section_layout.addWidget(title)
+
+        self._tts_enabled_checkbox = QCheckBox("Speak replies out loud", section)
+        self._tts_enabled_checkbox.setChecked(settings.voice.tts_enabled)
+        self._tts_enabled_checkbox.toggled.connect(self.tts_enabled_changed)
+        section_layout.addWidget(self._tts_enabled_checkbox)
+
+        voice_row = QHBoxLayout()
+        voice_row.addWidget(QLabel("Voice", section))
+        self._voice_combo = QComboBox(section)
+        self._voice_combo.addItems(_VOICE_CATALOG)
+        if settings.voice.voice in _VOICE_CATALOG:
+            self._voice_combo.setCurrentText(settings.voice.voice)
+        self._voice_combo.currentTextChanged.connect(self.voice_changed)
+        voice_row.addWidget(self._voice_combo, 1)
+        section_layout.addLayout(voice_row)
+
+        input_row = QHBoxLayout()
+        input_row.addWidget(QLabel("Microphone", section))
+        self._input_device_combo = QComboBox(section)
+        self._input_device_combo.currentIndexChanged.connect(
+            lambda _i: self.input_device_changed.emit(self._input_device_combo.currentData())
+        )
+        input_row.addWidget(self._input_device_combo, 1)
+        section_layout.addLayout(input_row)
+
+        output_row = QHBoxLayout()
+        output_row.addWidget(QLabel("Speaker", section))
+        self._output_device_combo = QComboBox(section)
+        self._output_device_combo.currentIndexChanged.connect(
+            lambda _i: self.output_device_changed.emit(self._output_device_combo.currentData())
+        )
+        output_row.addWidget(self._output_device_combo, 1)
+        section_layout.addLayout(output_row)
+
+        return section
+
+    def set_input_devices(self, devices: list[AudioDeviceInfo]) -> None:
+        """Called once at startup from `app.py` (FR-12) — `ui` can't enumerate devices
+        itself (D-5: no `nova.speech` import), so `app.py` hands the list over."""
+        self._fill_device_combo(self._input_device_combo, devices)
+
+    def set_output_devices(self, devices: list[AudioDeviceInfo]) -> None:
+        self._fill_device_combo(self._output_device_combo, devices)
+
+    @staticmethod
+    def _fill_device_combo(combo: QComboBox, devices: list[AudioDeviceInfo]) -> None:
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem(_SYSTEM_DEFAULT_DEVICE, None)
+        for device in devices:
+            combo.addItem(device.name, device.index)
+        combo.blockSignals(False)
 
     def show_missing_key_banner(self, message: str) -> None:
         self._banner.setText(message)

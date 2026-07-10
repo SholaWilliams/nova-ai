@@ -1,9 +1,10 @@
-"""Unit tests for nova.ui.views.settings_view — Brain section wiring (T-209)."""
+"""Unit tests for nova.ui.views.settings_view — Brain/Voice section wiring (T-209/T-407)."""
 
 import pytest
 from PySide6.QtWidgets import QLineEdit
 
 from nova.core.config import Settings
+from nova.core.models import AudioDeviceInfo
 from nova.ui.views.settings_view import SettingsView
 
 
@@ -172,3 +173,59 @@ def test_focus_first_key_field_focuses_the_gemini_entry(
     view.focus_first_key_field()
 
     assert calls == [True]
+
+
+# ── voice section (T-407) ──────────────────────────────────────────────
+
+
+def test_tts_enabled_checkbox_reflects_settings_default(view: SettingsView) -> None:
+    assert view._tts_enabled_checkbox.isChecked() is True
+
+
+def test_toggling_tts_checkbox_emits_tts_enabled_changed(view: SettingsView, qtbot: object) -> None:
+    with qtbot.waitSignal(view.tts_enabled_changed, timeout=1000) as blocker:  # type: ignore[attr-defined]
+        view._tts_enabled_checkbox.click()
+
+    assert blocker.args == [False]
+
+
+def test_voice_combo_defaults_to_settings_voice(view: SettingsView) -> None:
+    assert view._voice_combo.currentText() == "cosette"
+
+
+def test_changing_voice_combo_emits_voice_changed(view: SettingsView, qtbot: object) -> None:
+    with qtbot.waitSignal(view.voice_changed, timeout=1000) as blocker:  # type: ignore[attr-defined]
+        view._voice_combo.setCurrentText("alba")
+
+    assert blocker.args == ["alba"]
+
+
+def test_set_input_devices_populates_combo_with_system_default_first(view: SettingsView) -> None:
+    view.set_input_devices([AudioDeviceInfo(index=2, name="USB Mic")])
+
+    assert view._input_device_combo.itemText(0) == "System default"
+    assert view._input_device_combo.itemData(0) is None
+    assert view._input_device_combo.itemText(1) == "USB Mic"
+    assert view._input_device_combo.itemData(1) == 2
+
+
+def test_selecting_an_input_device_emits_input_device_changed(
+    view: SettingsView, qtbot: object
+) -> None:
+    view.set_input_devices([AudioDeviceInfo(index=5, name="Headset Mic")])
+
+    with qtbot.waitSignal(view.input_device_changed, timeout=1000) as blocker:  # type: ignore[attr-defined]
+        view._input_device_combo.setCurrentIndex(1)
+
+    assert blocker.args == [5]
+
+
+def test_selecting_an_output_device_emits_output_device_changed(
+    view: SettingsView, qtbot: object
+) -> None:
+    view.set_output_devices([AudioDeviceInfo(index=7, name="Speakers")])
+
+    with qtbot.waitSignal(view.output_device_changed, timeout=1000) as blocker:  # type: ignore[attr-defined]
+        view._output_device_combo.setCurrentIndex(1)
+
+    assert blocker.args == [7]
