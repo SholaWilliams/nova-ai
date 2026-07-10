@@ -56,7 +56,7 @@ Precedence: process env > `%APPDATA%\NOVA\.env` > repo `.env` (dev only). `.env.
 
 ## 5. Support Matrix
 
-Windows 11 x64, working audio in/out for voice features (app degrades to typed-only without), network required for LLM/STT/weather (offline behavior per SC-6/Phase 8 §6). Disk ≈ 400 MB unpacked.
+Windows 11 x64, working audio in/out for voice features (app degrades to typed-only without), network required for LLM/STT/weather (offline behavior per SC-6/Phase 8 §6). **Disk ≈ 1.2–2 GB unpacked** (revised M4: pocket-tts's PyTorch dependency, docs/04 TD-6 — up from the original ≈ 400 MB estimate; ⚠️ exact figure pending the actual M6 PyInstaller artifact).
 
 ---
 
@@ -65,5 +65,6 @@ Windows 11 x64, working audio in/out for voice features (app degrades to typed-o
 | Version | Date | Change |
 |---------|------|--------|
 | 1.0.0 | 2026-07-08 | Initial version for Phase 14 review. |
+| 1.1.0 | 2026-07-10 | M4: disk footprint revised for pocket-tts's PyTorch dependency (docs/04 TD-6) — ≈ 400 MB → ≈ 1.2–2 GB, ⚠️ pending actual M6 build measurement. |
 
 **Exit check:** a stranger with the zip + README can run NOVA in < 10 minutes; secrets never touch git or logs; every release step is checklisted.

@@ -13,14 +13,23 @@ from __future__ import annotations
 
 from typing import Literal
 
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QGraphicsOpacityEffect, QHBoxLayout, QLabel, QSizePolicy, QWidget
+from PySide6.QtCore import QTimer, Signal
+from PySide6.QtWidgets import (
+    QGraphicsOpacityEffect,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from nova.ui import theme
 from nova.ui.animations import make_property_animation
 from nova.ui.theme import Color, Motion, Radius, Spacing
 
 _MAX_WIDTH_FRACTION = 0.72
+_SPEAKER_BUTTON_SIZE = 24
 
 
 class MessageBubble(QWidget):
@@ -29,6 +38,8 @@ class MessageBubble(QWidget):
     Text renders in full immediately — no typewriter effect (NG-9 spirit: the visualization
     never simulates work that isn't happening).
     """
+
+    stop_speech_requested = Signal()
 
     def __init__(
         self, text: str, *, role: Literal["user", "nova"], parent: QWidget | None = None
@@ -57,7 +68,31 @@ class MessageBubble(QWidget):
                 f"background-color: {Color.BUBBLE_NOVA}; border-radius: {Radius.CARD}px; "
                 f"border-left: 2px solid {theme.accent_hex('cyan')}; color: {Color.TEXT_PRIMARY};"
             )
-            layout.addWidget(self._label, 0)
+            content = QWidget(self)
+            content_layout = QVBoxLayout(content)
+            content_layout.setContentsMargins(0, 0, 0, 0)
+            content_layout.setSpacing(0)
+            content_layout.addWidget(self._label)
+
+            # docs/05 §7.3: "a small volume-2 glyph pulses in the bubble corner; clicking it
+            # stops speech" (FR-13, one of three interrupt triggers). ponytail: shown on every
+            # NOVA bubble rather than only the currently-speaking one — syncing visibility/
+            # pulsing to the live SPEAKING stage is cosmetic polish beyond FR-13's functional
+            # ask (click stops speech); MainWindow already ignores clicks once nothing is
+            # playing (SpeechService.stop_speaking() is a no-op with nothing active).
+            self._speaker_button = QPushButton(content)
+            self._speaker_button.setIcon(theme.load_icon("volume-2", Color.TEXT_SECONDARY, size=16))
+            self._speaker_button.setFixedSize(_SPEAKER_BUTTON_SIZE, _SPEAKER_BUTTON_SIZE)
+            self._speaker_button.setFlat(True)
+            self._speaker_button.setToolTip("Stop speaking")
+            self._speaker_button.clicked.connect(self.stop_speech_requested)
+            speaker_row = QHBoxLayout()
+            speaker_row.setContentsMargins(0, 0, Spacing.XS, Spacing.XS)
+            speaker_row.addStretch(1)
+            speaker_row.addWidget(self._speaker_button)
+            content_layout.addLayout(speaker_row)
+
+            layout.addWidget(content, 0)
             layout.addStretch(1)
 
         self._label.setStyleSheet(style)

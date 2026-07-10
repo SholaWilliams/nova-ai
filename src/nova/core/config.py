@@ -83,7 +83,14 @@ class VoiceSettings(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     tts_enabled: bool = True
-    voice: str = "en-US-AnaNeural"
+    # ⚠️ verify-at-implementation (M4, docs/04 TD-6 revision): pocket-tts's built-in, non-
+    # gated voice catalog is name-selected (not a locale code like the old `en-US-AnaNeural`
+    # edge-tts default) — catalog: cosette, marius, javert, alba, jean, anna, vera, fantine,
+    # charles, paul, eponine, azelma, george, mary, jane, michael, eve, bill_boerst,
+    # peter_yearsley, stuart_bell, caro_davy, giovanni, lola, juergen, rafael, estelle.
+    # "cosette" chosen for the association (a child character) — actual timbre unauditioned
+    # in this environment (no speakers); owner should confirm/replace once heard for real.
+    voice: str = "cosette"
     input_device: int | None = None
     output_device: int | None = None
     sound_effects: bool = True

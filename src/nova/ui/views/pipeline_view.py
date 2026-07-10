@@ -97,6 +97,13 @@ class PipelineView(QWidget):
 
         self._bus.event_published.connect(self._on_event)
 
+    def set_audio_level(self, level: float) -> None:
+        """Drive the ring's amplitude directly from live mic/playback level (docs/11 §4:
+        `listening_level` is a separate high-frequency Qt signal, not a PipelineEvent) — M4's
+        job, per the comment this replaces. Wired directly to `SpeechInWorker.listening_level`
+        in `app.py`; a `PipelineEvent` still owns which *state* the ring is in."""
+        self._pulse_ring.set_level(level)
+
     def _on_event(self, event: PipelineEvent) -> None:
         if event.request_id != self._current_request_id:
             self._start_new_request(event.request_id)

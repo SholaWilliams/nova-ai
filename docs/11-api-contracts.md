@@ -71,14 +71,20 @@ class ProviderStatus:              # M2 — drives the header status cluster (FR
     active: str
     mode: Literal["normal", "fallback", "down"]
     detail: str
+
+@dataclass(frozen=True)
+class AudioDeviceInfo:             # M4 — Settings device dropdowns (FR-12)
+    index: int
+    name: str
 ```
 
-`ToolSchema` and `ProviderStatus` live here rather than in `providers/` or `tools/` because
-they're shapes two sibling layers must agree on without importing each other (D-2/D-3) or
-`ui` needing to reach past `core` (D-5) — see ARCHITECTURE_RULES.md's "cross-layer data
-shape" row. `LLMResponse`, `GenerateOptions`, `ProviderHealth`, and `ProviderCaps` (Phase 10
-§1) are *not* here — they're provider-specific vocabulary that only `agent` needs to reach via
-the ABC (D-4), so they live in `providers/base.py` instead, alongside the `LLMProvider` class
+`ToolSchema`, `ProviderStatus`, and `AudioDeviceInfo` live here rather than in `providers/`,
+`tools/`, or `speech/` because they're shapes two sibling layers must agree on without
+importing each other (D-2/D-3) or `ui` needing to reach past `core` (D-5) — see
+ARCHITECTURE_RULES.md's "cross-layer data shape" row. `LLMResponse`, `GenerateOptions`,
+`ProviderHealth`, and `ProviderCaps` (Phase 10 §1) are *not* here — they're provider-specific
+vocabulary that only `agent` needs to reach via the ABC (D-4), so they live in
+`providers/base.py` instead, alongside the `LLMProvider` class
 itself.
 
 ## 2. Pipeline Events (`nova/core/events.py`)
@@ -168,10 +174,14 @@ class LLMProvider(ABC):                                  # Phase 10 §1
 
 class SpeechService:                                     # Phase 8
     def listen(device: int | None) -> Transcript          # blocking, SpeechIn thread
-    def cancel_listening() -> None
+    def cancel_listening() -> None                         # Esc: discard, no STT
+    def end_listening() -> None                            # M4 addition: re-press, stop + transcribe
     def speak(reply: AssistantReply) -> None               # queued, SpeechOut thread
     def stop_speaking() -> None
-    signals: listening_level(float), speech_done(str request_id)
+    def warm_up_tts() -> None                              # M4 addition: not on the frozen wire path,
+                                                            # startup-only perf optimization
+    signals: listening_level(float), speech_done(str request_id),
+             tts_mode_changed(str)                          # M4 addition: "primary" | "offline"
 
 class MemoryService:                                     # Phase 9 §4
     def get_context(input: UserInput) -> MemoryContext
@@ -223,5 +233,6 @@ Unknown fields are preserved on rewrite (forward compatibility); invalid fields 
 | Version | Date | Change |
 |---------|------|--------|
 | 1.0.0 | 2026-07-08 | Initial version for Phase 11 review. |
+| 1.1.0 | 2026-07-10 | M4: additive `SpeechService` amendments (`end_listening()`, `warm_up_tts()`, `tts_mode_changed` signal); added `AudioDeviceInfo` to §1's core data types (Settings device dropdowns, FR-12). |
 
 **Exit check:** every cross-layer arrow in Phase 3 §2 has a typed contract here; all external data is validated at entry; wire formats are golden-testable.

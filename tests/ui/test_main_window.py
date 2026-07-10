@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt, QTimer
 
 from nova.core.config import Settings
 from nova.core.events import EventBus, PipelineStage
-from nova.core.models import AssistantReply, ProviderStatus, UserInput
+from nova.core.models import AssistantReply, ProviderStatus, Transcript, UserInput
 from nova.ui.main_window import MainWindow
 from nova.ui.theme import Color
 from nova.ui.widgets.stage_chip import ChipState
@@ -217,6 +217,131 @@ def test_set_provider_status_down_mode_uses_error_color(window: MainWindow) -> N
     )
     assert window._status_label.text() == "I can't reach my brain right now"
     assert Color.STATE_ERROR in window._status_label.styleSheet()
+
+
+# ── voice (M4) ──────────────────────────────────────────────────────
+
+
+def test_mic_click_when_idle_emits_mic_pressed_with_the_configured_device(
+    window: MainWindow, qtbot: object
+) -> None:
+    window._settings.voice.input_device = 3
+
+    with qtbot.waitSignal(window.mic_pressed, timeout=1000) as blocker:  # type: ignore[attr-defined]
+        window._mic_button.click()
+
+    assert blocker.args == [3]
+    assert window._listening is True
+    assert not window._entry.isEnabled()
+    assert not window._send_button.isEnabled()
+
+
+def test_mic_click_also_stops_any_ongoing_speech(window: MainWindow, qtbot: object) -> None:
+    with qtbot.waitSignal(window.stop_speaking_requested, timeout=1000):  # type: ignore[attr-defined]
+        window._mic_button.click()
+
+
+def test_mic_click_while_listening_emits_mic_repressed(window: MainWindow, qtbot: object) -> None:
+    window._mic_button.click()  # now listening
+
+    with qtbot.waitSignal(window.mic_repressed, timeout=1000):  # type: ignore[attr-defined]
+        window._mic_button.click()
+
+
+def test_mic_click_is_ignored_while_awaiting_a_reply(window: MainWindow) -> None:
+    window._entry.setText("hi")
+    window._send_button.click()  # now awaiting a reply
+
+    received: list[object] = []
+    window.mic_pressed.connect(lambda device: received.append(device))
+    window._mic_button.click()
+
+    assert received == []
+
+
+def test_escape_while_listening_emits_listening_cancelled_not_cancel_requested(
+    window: MainWindow, qtbot: object
+) -> None:
+    window._mic_button.click()  # now listening
+    cancel_received: list[bool] = []
+    window.cancel_requested.connect(lambda: cancel_received.append(True))
+
+    with qtbot.waitSignal(window.listening_cancelled, timeout=1000):  # type: ignore[attr-defined]
+        qtbot.keyClick(window, Qt.Key.Key_Escape)  # type: ignore[attr-defined]
+
+    assert cancel_received == []
+
+
+def test_transcript_ready_with_text_adds_user_bubble_and_submits_as_voice(
+    window: MainWindow, qtbot: object
+) -> None:
+    window._mic_button.click()
+
+    with qtbot.waitSignal(window.submit_requested, timeout=1000) as blocker:  # type: ignore[attr-defined]
+        window.on_transcript_ready(Transcript(request_id="req_v1", text="hi nova", confidence=0.9))
+
+    user_input = blocker.args[0]
+    assert user_input.source == "voice"
+    assert user_input.request_id == "req_v1"
+    assert window._chat_view.bubble_count() == 1
+    assert window._listening is False
+
+
+def test_transcript_ready_with_empty_text_shows_a_friendly_nudge(window: MainWindow) -> None:
+    window._mic_button.click()
+
+    window.on_transcript_ready(Transcript(request_id="req_v2", text="", confidence=None))
+
+    assert window._chat_view.bubble_count() == 1  # only the nudge, no user bubble
+    assert window._listening is False
+
+
+def test_explicit_cancel_suppresses_the_friendly_nudge(window: MainWindow, qtbot: object) -> None:
+    window._mic_button.click()
+    qtbot.keyClick(window, Qt.Key.Key_Escape)  # type: ignore[attr-defined]
+
+    window.on_transcript_ready(Transcript(request_id="req_v3", text="", confidence=None))
+
+    assert window._chat_view.bubble_count() == 0  # silent discard, no bubble at all
+
+
+def test_on_listen_failed_shows_message_and_resets_listening_state(window: MainWindow) -> None:
+    window._mic_button.click()
+
+    window.on_listen_failed("Something went wrong while I was listening.")
+
+    assert window._listening is False
+    assert window._chat_view.bubble_count() == 1
+
+
+def test_set_mic_available_false_disables_the_mic_button(window: MainWindow) -> None:
+    window.set_mic_available(False)
+
+    assert not window._mic_button.isEnabled()
+
+
+def test_set_mic_available_true_re_enables_the_mic_button(window: MainWindow) -> None:
+    window.set_mic_available(False)
+    window.set_mic_available(True)
+
+    assert window._mic_button.isEnabled()
+
+
+def test_sending_typed_text_also_stops_any_ongoing_speech(
+    window: MainWindow, qtbot: object
+) -> None:
+    window._entry.setText("hello")
+
+    with qtbot.waitSignal(window.stop_speaking_requested, timeout=1000):  # type: ignore[attr-defined]
+        window._send_button.click()
+
+
+def test_set_voice_mode_offline_shows_the_backup_voice_indicator(window: MainWindow) -> None:
+    window.set_voice_mode("offline")
+    assert not window._voice_status_label.isHidden()
+
+    window.set_voice_mode("primary")
+    assert window._voice_status_label.isHidden()
 
 
 class TestConfirmationGateWiring:

@@ -38,15 +38,17 @@
 
 ## 4. Text-to-Speech
 
-**Primary:** `edge-tts` neural voices (TD-6). Default **`en-US-AnaNeural`** (child-friendly timbre) ⚠️, alternates selectable in Settings (Aria, Guy, plus locale voices). Synthesis streams MP3 chunks → decode → `sounddevice.OutputStream`; playback begins on first chunk (NFR-2: < 2 s to first audio).
+**Primary (revised M4, owner direction):** `pocket-tts` (Kyutai Labs, TD-6) — a 100M-parameter neural voice model running entirely on CPU, no network needed per-utterance. Default voice **`cosette`** (from pocket-tts's built-in, non-gated catalog) ⚠️ unauditioned in this dev environment (no speakers) — owner should confirm/replace once heard for real; alternates selectable in Settings from the same catalog (`alba`, `marius`, `jean`, …). Synthesis streams PCM chunks via `generate_audio_stream()` → `sounddevice.OutputStream`; playback begins on first chunk (NFR-2: < 2 s to first audio — measured ~0.85 s on the dev machine). The model is loaded once, in the background, at app startup (`SpeechService.warm_up_tts()`) rather than lazily on first use — hands-on measurement found `TTSModel.load_model()` taking 30–100 s even with cached weights, which would otherwise land on a user's first spoken reply.
 
-**Fallback:** `pyttsx3` (SAPI5, offline). Automatic switch when edge-tts errors or network is down; status cluster shows "Voice: offline" (warning tint, Phase 5 §7.4). This is also the demo backup voice (R-1).
+**Fallback:** `pyttsx3` (SAPI5, offline, zero model/network dependency). Automatic switch when pocket-tts fails to load or generate; status cluster shows a backup-voice indicator (warning tint, Phase 5 §7.4). This is also the demo backup voice (R-1). Voice cloning (arbitrary audio-prompt URLs) is out of scope for v1.0 — the fixed catalog only.
 
 **Behavior:**
 - Every reply is spoken (TTS on) *and* displayed (FR-9); mute in Settings/status toggle (FR-10).
 - `spoken_text` may be shorter than displayed text (agent may trim lists for speech — Phase 6 §5).
-- **Interruption (FR-13):** clicking the speaker glyph, pressing mic, or submitting new input stops playback within 100 ms (stream abort, no fade). `SPEAKING failed→interrupted` recorded honestly.
+- **Interruption (FR-13):** clicking the speaker glyph, pressing mic, or submitting new input stops playback within 100 ms. Two mechanisms: `AudioPlayback.abort()` (PortAudio's `Pa_AbortStream`, the actual bound-delivering hard stop, safe cross-thread) plus a cooperative `should_stop` flag polled between chunks/iterations (stops further wasted generation/decode work, doesn't itself deliver the 100 ms bound). `SPEAKING failed→interrupted` recorded honestly.
 - Emoji and markdown are stripped for synthesis; numbers ≤ 4 digits spoken naturally by the engine.
+
+**Contract additions (docs/11 §4, M4, additive):** `SpeechService.end_listening()` — re-press-mic (stop capturing now, transcribe whatever's buffered) alongside the existing `cancel_listening()` (Esc: discard, no STT) — one boolean flag can't honestly serve both outcomes, since Esc must *always* discard regardless of how much speech was captured. A `tts_mode_changed(str)` notification ("primary" | "offline") drives the status-cluster indicator above.
 
 ## 5. Audio Cues & Device Management
 
@@ -60,7 +62,7 @@
 | No microphone / access denied | typed mode remains; mic disabled | struck-through mic + tooltip; "I can't hear right now — you can type to me!" once |
 | STT network/API failure | 1 retry; then abort listen | "My ears aren't working — is the internet on?" + typed fallback |
 | STT empty result | no agent call | "I didn't catch that — try again?" |
-| edge-tts failure | silent auto-switch to pyttsx3 | response still spoken (robotic); "Voice: offline" status |
+| pocket-tts failure (load or generate) | silent auto-switch to pyttsx3 | response still spoken (robotic); backup-voice status |
 | Both TTS fail | text-only | reply displayed; speaker icon disabled with tooltip |
 | Playback device vanished | stop, re-enumerate | toast "Speaker changed — check Settings" |
 
@@ -79,5 +81,6 @@
 | Version | Date | Change |
 |---------|------|--------|
 | 1.0.0 | 2026-07-08 | Initial version for Phase 8 review. |
+| 1.1.0 | 2026-07-10 | M4, owner direction: primary TTS swapped `edge-tts` → `pocket-tts` (docs/04 TD-6); default voice, warm-up-at-startup rationale, and revised interruption/error-matrix wording updated to match; `end_listening()`/`tts_mode_changed` contract additions recorded (docs/11 §4). |
 
 **Exit check:** listen/speak flows fully deterministic with timeouts everywhere; every failure lands conversationally; nothing listens without a visible indicator (now or in the wake-word future).

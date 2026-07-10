@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
 
 from nova.ui.theme import Spacing
@@ -26,6 +26,8 @@ class ChatView(QWidget):
     history — courtesy behavior implied by T-208's own "history scroll" scope, not
     explicitly spec'd elsewhere.
     """
+
+    stop_speech_requested = Signal()  # any NOVA bubble's speaker glyph was clicked (FR-13)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -60,6 +62,7 @@ class ChatView(QWidget):
 
         bubble = MessageBubble(text, role=role, parent=self._column)
         bubble.set_max_bubble_width(self.width())
+        bubble.stop_speech_requested.connect(self.stop_speech_requested)
         self._column_layout.insertWidget(self._column_layout.count() - 1, bubble)
 
         if was_at_bottom:

@@ -22,7 +22,7 @@ Each decision is a mini-ADR: **Decision → Why → Rejected alternatives**. Any
 | Concurrency | QThread workers + signals (no asyncio) |
 | LLM providers | Google Gemini (`google-genai` SDK) + Groq (`groq` SDK) |
 | STT | Groq Whisper API (`whisper-large-v3-turbo`) ⚠️ |
-| TTS | `edge-tts` (neural) with `pyttsx3` (SAPI5) offline fallback |
+| TTS | `pocket-tts` (local CPU neural, revised M4) with `pyttsx3` (SAPI5) fallback |
 | VAD | `webrtcvad-wheels` |
 | Audio I/O | `sounddevice` |
 | Weather | Open-Meteo (no API key) |
@@ -64,16 +64,18 @@ Each decision is a mini-ADR: **Decision → Why → Rejected alternatives**. Any
 **Why:** `whisper-large-v3-turbo` on Groq is fast (typically < 1 s for short utterances), accurate on non-adult voices (R-2 mitigation), free tier, and reuses the Groq API key. Push-to-talk clips are short, so payloads are small.
 **Rejected:** **Windows SAPI recognition** — accuracy too poor for children; **Vosk (local)** — accuracy gap vs Whisper; **local faster-whisper** — viable on CPU but adds seconds of latency on 2 GHz; retained as the *future offline* path (Phase 8 §8); **Azure/Google Cloud STT** — setup ceremony + billing complexity unfit for classroom operators.
 
-## TD-6 · TTS: edge-tts primary, pyttsx3 fallback
+## TD-6 · TTS: pocket-tts primary, pyttsx3 fallback
 
-**Why:** `edge-tts` gives Microsoft neural voices (natural, child-friendly) free with no API key — the single biggest "it feels alive" lever (R-11). `pyttsx3` (SAPI5) is fully offline and keyless: it is both the network-failure fallback (SC-6, R-1) and the demo backup voice.
-**Risk ⚠️:** `edge-tts` is an unofficial client of a Microsoft endpoint and can break; the fallback is therefore *architecturally mandatory* (`TTSEngine` ABC, A-4), not optional.
-**Rejected:** **ElevenLabs/OpenAI TTS** — quality, but paid (R-3); **gTTS** — high latency, robotic prosody; **SAPI5-only** — robotic voice undermines P-4.
+**Revised at M4 (owner direction):** `edge-tts` — this TD's original pick — is replaced by **[pocket-tts](https://github.com/kyutai-labs/pocket-tts)** (Kyutai Labs), a 100M-parameter neural voice model that runs entirely on CPU, MIT licensed. `pyttsx3` (SAPI5) stays as the fallback: fully offline, keyless, used whenever pocket-tts fails to load or generate.
+**Why:** pocket-tts needs no network per-utterance (only a one-time model-weight download/cache) and no per-request API cost, removing edge-tts's unofficial-endpoint fragility risk (below) entirely rather than just mitigating it. Voice selection uses its built-in, non-gated catalog (`cosette`, `alba`, `marius`, …) via `get_state_for_audio_prompt(name)` — confirmed by hands-on testing; the alternative `hf://` voice-cloning path requires accepting gated terms on Hugging Face and a local login, out of scope for v1.0.
+**Real cost, accepted:** the `pocket-tts` package requires **PyTorch 2.5+**. Pinned to the **CPU-only** wheel index (`download.pytorch.org/whl/cpu`) to avoid the far larger CUDA-bundled default — confirmed via `torch.cuda.is_available() == False` after install. Measured real footprint (M4, this dev machine): `torch` ≈ 477 MB on disk; whole dev venv (including all M1–M3 deps) ≈ 1.53 GB, up from the ≈300–400 MB this doc originally estimated. See the Dependency Budget section below and docs/14 §5 for the revised numbers — both ⚠️ pending the actual M6 PyInstaller artifact size. Also measured: `TTSModel.load_model()` took 30–100 s even with cached weights on this machine (nothing like a sub-second cost) — `SpeechService.warm_up_tts()` loads it in the background at app startup (docs/08 §4) so this lands before a user's first spoken reply, not during it. `quantize=True` (dynamic int8) is used unconditionally — pocket-tts's own docs claim ~48% less runtime memory with no measurable quality loss, a direct win against NFR-4.
+**Rejected:** **edge-tts** (original pick) — unofficial client of a Microsoft endpoint that can break, and needs network for every utterance; superseded now that a good-quality *local* option exists. **ElevenLabs/OpenAI TTS** — quality, but paid (R-3). **gTTS** — high latency, robotic prosody. **SAPI5-only** — robotic voice undermines P-4 (kept only as the fallback, not the primary).
 
 ## TD-7 · VAD: webrtcvad · Audio: sounddevice
 
 **Why:** WebRTC VAD is a few hundred KB, pure CPU, industry-proven for end-of-speech detection (30 ms frames); `webrtcvad-wheels` provides maintained binary wheels for Python 3.12. `sounddevice` (PortAudio) has clean device enumeration/selection (FR-12) and NumPy-friendly capture.
 **Rejected:** **silero-vad** — better accuracy but drags in ONNX/torch weight for marginal gain at push-to-talk (we have an explicit start signal); **PyAudio** — stale wheel maintenance.
+**Note (M4):** TD-6's revision above already brings PyTorch into the dependency tree for TTS, so the premise behind rejecting `silero-vad` here ("avoid adding torch") no longer fully holds — recorded for honesty, not acted on: `webrtcvad` is still lighter, still proven, and switching VAD to `silero-vad` now would buy nothing new, so VAD stays as originally decided.
 
 ## TD-8 · Weather: Open-Meteo
 
@@ -115,9 +117,11 @@ Each decision is a mini-ADR: **Decision → Why → Rejected alternatives**. Any
 
 ## Dependency Budget
 
-Runtime deps (packaged): PySide6, google-genai, groq, edge-tts, pyttsx3, sounddevice, webrtcvad-wheels, httpx, pydantic, pydantic-settings, python-dotenv, simpleeval, numpy (sounddevice transitive). Estimated packaged footprint ≈ 300–400 MB on disk, well within storage constraint; steady-state RAM dominated by Qt (~250–400 MB) — comfortable under the 1.5 GB ceiling (NFR-4).
+Runtime deps (packaged): PySide6, google-genai, groq, **pocket-tts** (revised M4; pulls in `torch` CPU-only + `numpy`, `scipy`, `safetensors`, `huggingface-hub`, and other transitives), pyttsx3, sounddevice, webrtcvad-wheels, httpx, pydantic, pydantic-settings, python-dotenv, simpleeval.
 
-**Pinning policy:** exact pins in a lockfile (`uv lock` or `pip-tools`) ⚠️ tool choice at M1; `pyproject.toml` carries compatible ranges.
+**Revised at M4:** the original ≈ 300–400 MB estimate assumed `edge-tts` (no heavy transitives); with pocket-tts's real dependency tree measured on the dev machine — `torch` ≈ 477 MB on disk alone, whole dev venv (all M1–M4 deps together) ≈ 1.53 GB — the packaged footprint is now realistically **≈ 1.2–2 GB** ⚠️ (exact number pending the actual M6 PyInstaller artifact, which strips dev/test-only files a bare venv doesn't). RAM: Qt's own ~250–400 MB plus PyTorch CPU inference of a 100M-param model puts real pressure on the 1.5 GB ceiling (NFR-4) that wasn't a concern under the old edge-tts plan — `quantize=True` (~48% less runtime memory per pocket-tts's own docs) is used to claw some of that back, but this is flagged, not asserted safe; M5's perf pass (T-507) is the real check. See docs/14 §5 for the matching support-matrix update.
+
+**Pinning policy:** exact pins in a lockfile (`uv lock` or `pip-tools`) ⚠️ tool choice at M1; `pyproject.toml` carries compatible ranges. `torch` is pinned to PyPI's `cpu`-only wheel index (`download.pytorch.org/whl/cpu`) via `[tool.uv.sources]`/`[[tool.uv.index]]` in `pyproject.toml` — without this override, the default Windows wheel bundles CUDA runtime libraries that are dead weight on this GPU-less target (confirmed via `torch.cuda.is_available() == False` post-install).
 
 ---
 
@@ -127,5 +131,6 @@ Runtime deps (packaged): PySide6, google-genai, groq, edge-tts, pyttsx3, soundde
 |---------|------|--------|
 | 1.0.0 | 2026-07-08 | Initial version for Phase 4 review. |
 | 1.1.0 | 2026-07-09 | M2/T-202-T-203: swapped stale default models — `gemini-2.5-flash` → `gemini-3.5-flash` (old model shuts down 2026-10-16), `llama-3.3-70b-versatile` → `openai/gpt-oss-120b` (deprecated for Groq's free/dev tier 2026-06-17). Both ⚠️s resolved. |
+| 1.2.0 | 2026-07-10 | M4, owner direction: TD-6 primary TTS swapped `edge-tts` → `pocket-tts` (local CPU neural voice, Kyutai Labs); dependency budget and TD-7 amended for the resulting PyTorch footprint; both flagged ⚠️ pending the M6 packaged-artifact measurement. |
 
 **Exit check:** every choice traces to a constraint (hardware, cost, license, pedagogy); all ⚠️ items are listed as M1 verification tasks in Phase 12.

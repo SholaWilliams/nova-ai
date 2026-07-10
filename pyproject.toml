@@ -14,6 +14,14 @@ dependencies = [
     "python-dotenv>=1.0,<2",
     "simpleeval>=1.0,<2",
     "httpx>=0.27,<1",
+    # ── M4 speech (docs/08) ──────────────────────────────────────────
+    "sounddevice>=0.4,<1",
+    "webrtcvad-wheels>=2.0,<3",
+    # pocket-tts (docs/04 TD-6, revised M4): local CPU neural TTS, pulls torch transitively —
+    # pinned to the CPU-only wheel index below so this GPU-less target never resolves the
+    # much larger CUDA-bundled build.
+    "pocket-tts>=0.1",
+    "pyttsx3>=2.90,<3",
 ]
 
 [dependency-groups]
@@ -31,6 +39,17 @@ dev = [
 
 [tool.uv]
 default-groups = ["dev"]
+
+# CPU-only torch (docs/04 TD-6 revision, M4): pocket-tts depends on torch>=2.5; without this
+# override, uv/pip resolve PyPI's default Windows wheel, which bundles CUDA runtime libraries
+# (multi-GB) that are dead weight on this GPU-less target (NG-2, TD-1's hardware envelope).
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [build-system]
 requires = ["hatchling"]
@@ -87,8 +106,9 @@ markers = [
 # docs/13 §2's "core, agent, tools, memory" enumeration omits providers, but the PRD's
 # actual NFR-11 text just says "core logic" — providers hosts the most intricate new
 # logic in M2 (fallback/cooldown state machine), so it's included here (flagged as a
-# likely docs/13 §2 gap, not a deliberate exclusion, in docs/ai/MEMORY.md).
-source = ["src/nova/core", "src/nova/agent", "src/nova/providers", "src/nova/tools"]
+# likely docs/13 §2 gap, not a deliberate exclusion, in docs/ai/MEMORY.md). M4 adds
+# speech (VAD/fallback state machines are the same kind of intricate logic).
+source = ["src/nova/core", "src/nova/agent", "src/nova/providers", "src/nova/tools", "src/nova/speech"]
 
 # ── import-linter (D-1...D-7, docs/03 §6) ────────────────────────────
 # M1 scoped to core/ui/app.py. M2 adds providers/agent. A single `layers` contract
@@ -109,25 +129,25 @@ layers = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "M2/M3 layering: app -> agent -> (providers | tools) -> core (D-1..D-4, D-6, D-7)"
+name = "M2/M3/M4 layering: app -> agent -> (providers | tools | speech) -> core (D-1..D-4, D-6, D-7)"
 type = "layers"
 layers = [
     "nova.app",
     "nova.agent",
-    "nova.providers : nova.tools",
+    "nova.providers : nova.tools : nova.speech",
     "nova.core",
 ]
 
 [[tool.importlinter.contracts]]
-name = "D-5: ui imports core only, never agent/providers"
+name = "D-5: ui imports core only, never agent/providers/speech"
 type = "forbidden"
 source_modules = ["nova.ui"]
-forbidden_modules = ["nova.agent", "nova.providers", "nova.tools"]
+forbidden_modules = ["nova.agent", "nova.providers", "nova.tools", "nova.speech"]
 
 [[tool.importlinter.contracts]]
-name = "D-4 corollary: agent/providers/tools never import ui"
+name = "D-4 corollary: agent/providers/tools/speech never import ui"
 type = "forbidden"
-source_modules = ["nova.agent", "nova.providers", "nova.tools"]
+source_modules = ["nova.agent", "nova.providers", "nova.tools", "nova.speech"]
 forbidden_modules = ["nova.ui"]
 
 [[tool.importlinter.contracts]]
@@ -135,3 +155,9 @@ name = "D-4: agent depends on provider ABCs/manager only, never concrete adapter
 type = "forbidden"
 source_modules = ["nova.agent"]
 forbidden_modules = ["nova.providers.gemini", "nova.providers.groq"]
+
+[[tool.importlinter.contracts]]
+name = "M4: agent never imports speech directly (app.py is the only connector)"
+type = "forbidden"
+source_modules = ["nova.agent"]
+forbidden_modules = ["nova.speech"]
