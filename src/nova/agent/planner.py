@@ -1,9 +1,8 @@
 """Planner: assembles the provider-ready message list (docs/06 §2.1, §3).
 
-Order: system prompt -> trimmed history -> user input. Memory-context injection (docs/06
-§2.1 step 2) is a stub until `MemoryService` exists (M5) — `Agent` simply doesn't pass one
-yet. Thinking-summary extraction (FR-18) lives here too (`thinking_summary`), used by the
-Agent at every SELECTING_TOOL emission.
+Order: system prompt -> memory block (if any) -> trimmed history -> user input. Thinking-
+summary extraction (FR-18) lives here too (`thinking_summary`), used by the Agent at every
+SELECTING_TOOL emission.
 """
 
 from __future__ import annotations
@@ -12,9 +11,10 @@ import importlib.resources
 import re
 from collections.abc import Sequence
 
-from nova.core.models import ChatMessage, UserInput
+from nova.core.models import ChatMessage, MemoryContext, UserInput
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s")
+_MEMORY_LABEL = "Things you remember about this user:"
 
 
 def thinking_summary(prose: str | None, tool_title: str) -> str:
@@ -44,10 +44,24 @@ class Planner:
     def __init__(self, system_prompt: str) -> None:
         self._system_prompt = system_prompt
 
-    def build(self, user_input: UserInput, history: Sequence[ChatMessage]) -> list[ChatMessage]:
-        """Assemble one turn's message list: system prompt, trimmed history, user input."""
-        return [
-            ChatMessage(role="system", content=self._system_prompt),
-            *history,
-            ChatMessage(role="user", content=user_input.text),
-        ]
+    def build(
+        self,
+        user_input: UserInput,
+        history: Sequence[ChatMessage],
+        memory_context: MemoryContext | None = None,
+    ) -> list[ChatMessage]:
+        """Assemble one turn's message list: system prompt, memory block (if non-empty),
+        trimmed history, user input (docs/09 §5: no hits -> block omitted, prompt stays lean)."""
+        messages = [ChatMessage(role="system", content=self._system_prompt)]
+        if memory_context is not None and not memory_context.is_empty():
+            messages.append(
+                ChatMessage(role="system", content=_format_memory_block(memory_context))
+            )
+        messages.extend(history)
+        messages.append(ChatMessage(role="user", content=user_input.text))
+        return messages
+
+
+def _format_memory_block(context: MemoryContext) -> str:
+    lines = [*context.preferences, *context.facts]
+    return f"{_MEMORY_LABEL} " + "; ".join(lines)
