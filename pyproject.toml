@@ -107,8 +107,16 @@ markers = [
 # actual NFR-11 text just says "core logic" — providers hosts the most intricate new
 # logic in M2 (fallback/cooldown state machine), so it's included here (flagged as a
 # likely docs/13 §2 gap, not a deliberate exclusion, in docs/ai/MEMORY.md). M4 adds
-# speech (VAD/fallback state machines are the same kind of intricate logic).
-source = ["src/nova/core", "src/nova/agent", "src/nova/providers", "src/nova/tools", "src/nova/speech"]
+# speech (VAD/fallback state machines are the same kind of intricate logic). M5 adds memory
+# (facts/conversation stores + retrieval scoring — same "intricate enough to matter" bar).
+source = [
+    "src/nova/core",
+    "src/nova/agent",
+    "src/nova/providers",
+    "src/nova/tools",
+    "src/nova/speech",
+    "src/nova/memory",
+]
 
 # ── import-linter (D-1...D-7, docs/03 §6) ────────────────────────────
 # M1 scoped to core/ui/app.py. M2 adds providers/agent. A single `layers` contract
@@ -129,25 +137,25 @@ layers = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "M2/M3/M4 layering: app -> agent -> (providers | tools | speech) -> core (D-1..D-4, D-6, D-7)"
+name = "M2-M5 layering: app -> agent -> (providers|tools|speech|memory) -> core (D-1..D-4, D-6, D-7)"
 type = "layers"
 layers = [
     "nova.app",
     "nova.agent",
-    "nova.providers : nova.tools : nova.speech",
+    "nova.providers : nova.tools : nova.speech : nova.memory",
     "nova.core",
 ]
 
 [[tool.importlinter.contracts]]
-name = "D-5: ui imports core only, never agent/providers/speech"
+name = "D-5: ui imports core only, never agent/providers/speech/memory"
 type = "forbidden"
 source_modules = ["nova.ui"]
-forbidden_modules = ["nova.agent", "nova.providers", "nova.tools", "nova.speech"]
+forbidden_modules = ["nova.agent", "nova.providers", "nova.tools", "nova.speech", "nova.memory"]
 
 [[tool.importlinter.contracts]]
-name = "D-4 corollary: agent/providers/tools/speech never import ui"
+name = "D-4 corollary: agent/providers/tools/speech/memory never import ui"
 type = "forbidden"
-source_modules = ["nova.agent", "nova.providers", "nova.tools", "nova.speech"]
+source_modules = ["nova.agent", "nova.providers", "nova.tools", "nova.speech", "nova.memory"]
 forbidden_modules = ["nova.ui"]
 
 [[tool.importlinter.contracts]]

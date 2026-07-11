@@ -115,3 +115,75 @@ class ProviderStatus:
     active: str
     mode: Literal["normal", "fallback", "down"]
     detail: str
+
+
+@dataclass(frozen=True)
+class MemoryItem:
+    """One stored fact or preference (docs/09 §3 `facts.json`, M5).
+
+    Lives in `core`, not `memory/`, because `ui` needs this shape for the Memory View
+    (FR-32/33) but can never import `memory` (D-5) — same reasoning as `ProviderStatus`/
+    `AudioDeviceInfo`. Deferred from M2 ("docs/03 §7.2 additionally lists MemoryItem... to
+    the agent/memory milestones that actually produce them" — M5 is that milestone).
+    """
+
+    id: str
+    kind: Literal["fact", "preference"]
+    content: str
+    keywords: tuple[str, ...]
+    created_at: datetime
+    source_request: str
+
+
+@dataclass(frozen=True)
+class ToolCallRecord:
+    """One tool invocation as archived in a session's `stages`/`tools` record (docs/09 §3)."""
+
+    name: str
+    args: dict[str, Any]
+    status: Literal["ok", "error", "timeout", "denied"]
+    duration_ms: int
+
+
+@dataclass(frozen=True)
+class TurnRecord:
+    """One conversation turn, archived to a session `.jsonl` file (docs/09 §3).
+
+    `stages` is `(stage_name, duration_ms)` pairs in emission order — the raw material for
+    History's replay (FR-40 extension). Conversation persistence is automatic and silent
+    (a different lifecycle than explicit fact writes, docs/09 §1) — this record has no
+    corresponding pipeline event of its own.
+    """
+
+    request_id: str
+    ts: datetime
+    user_text: str
+    user_source: Literal["voice", "typed"]
+    assistant_text: str
+    tools: tuple[ToolCallRecord, ...]
+    stages: tuple[tuple[str, int], ...]
+
+
+@dataclass(frozen=True)
+class SessionMeta:
+    """One entry in the History drawer's session list (docs/09 §3 `index.json`, FR-5/6)."""
+
+    session_id: str
+    started_at: datetime
+    title: str
+    turns: int
+
+
+@dataclass(frozen=True)
+class MemoryContext:
+    """What the Planner injects as the labeled "Things you remember about this user" block
+    (docs/09 §5). `preferences` (kind="preference" facts, always included) and `facts` (top-
+    scored kind="fact" facts) are kept separate only so the Planner can label/order them;
+    both are plain content strings, already trimmed to the retrieval budget.
+    """
+
+    preferences: tuple[str, ...]
+    facts: tuple[str, ...]
+
+    def is_empty(self) -> bool:
+        return not self.preferences and not self.facts
