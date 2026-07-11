@@ -57,6 +57,14 @@ class ChatView(QWidget):
         """Number of message bubbles currently shown (test/debug convenience)."""
         return self._column_layout.count() - 1  # exclude the trailing stretch
 
+    def clear(self) -> None:
+        """ "New conversation" (docs/05 §6.5) — removes every bubble."""
+        while self._column_layout.count() > 1:
+            item = self._column_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
     def _add_bubble(self, text: str, *, role: Literal["user", "nova"]) -> None:
         was_at_bottom = self._is_scrolled_to_bottom()
 

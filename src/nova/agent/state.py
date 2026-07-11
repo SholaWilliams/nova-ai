@@ -26,6 +26,11 @@ class ConversationState:
     def append(self, message: ChatMessage) -> None:
         self._messages.append(message)
 
+    def clear(self) -> None:
+        """ "New conversation" (docs/05 §6.5, History drawer) — drops the working history;
+        long-term facts are unaffected (a different lifecycle, docs/09 §1)."""
+        self._messages = []
+
     def snapshot(self) -> tuple[ChatMessage, ...]:
         """The trimmed history for the Planner: the last `_MAX_TURNS` turns, verbatim.
 
