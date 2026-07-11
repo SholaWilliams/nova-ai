@@ -104,6 +104,10 @@ class PipelineView(QWidget):
         in `app.py`; a `PipelineEvent` still owns which *state* the ring is in."""
         self._pulse_ring.set_level(level)
 
+    def set_accent(self, accent: str) -> None:
+        """FR-44 (M5): live accent swap from Settings' Look section."""
+        self._pulse_ring.set_accent(accent)
+
     def _on_event(self, event: PipelineEvent) -> None:
         if event.request_id != self._current_request_id:
             self._start_new_request(event.request_id)

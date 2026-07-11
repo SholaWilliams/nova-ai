@@ -1,9 +1,9 @@
-"""SettingsView: the Settings screen, Brain section only (docs/05 §6.3, T-209).
+"""SettingsView: the Settings screen (docs/05 §6.3, T-209/T-407).
 
-Voice/Weather/Look/About sections have nothing to populate until M4/M5 — building an empty
-icon-rail scaffold for them now would be speculative unexercised surface. `SettingsView` is
-still composed as a `QVBoxLayout` of section-widgets from day one so a rail can wrap around
-it later without a rewrite.
+Brain (M2), Voice (M4), Weather + Look (M5) sections are built; About lands in M6 (T-603).
+`SettingsView` is composed as a `QVBoxLayout` of section-widgets rather than the icon-rail
+docs/05 §6.3 pictures — a rail can still wrap around it later without a rewrite, and building
+one now for 5 sections would be premature chrome.
 
 `ui` imports core only (D-5) — this view never imports `nova.providers`. Provider selection,
 key entry, and key testing are all signals the composition root (`app.py`) wires to the real
@@ -161,6 +161,9 @@ class SettingsView(QWidget):
     voice_changed = Signal(str)
     input_device_changed = Signal(object)  # int | None
     output_device_changed = Signal(object)  # int | None
+    default_city_changed = Signal(str)
+    accent_changed = Signal(str)  # "cyan" | "violet" | "emerald" | "amber"
+    reduced_motion_changed = Signal(bool)
 
     def __init__(self, settings: Settings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -181,6 +184,8 @@ class SettingsView(QWidget):
 
         layout.addWidget(self._build_brain_section(settings))
         layout.addWidget(self._build_voice_section(settings))
+        layout.addWidget(self._build_weather_section(settings))
+        layout.addWidget(self._build_look_section(settings))
         layout.addStretch(1)
 
     def _build_brain_section(self, settings: Settings) -> QWidget:
@@ -259,6 +264,63 @@ class SettingsView(QWidget):
         )
         output_row.addWidget(self._output_device_combo, 1)
         section_layout.addLayout(output_row)
+
+        return section
+
+    def _build_weather_section(self, settings: Settings) -> QWidget:
+        section = QWidget(self)
+        section.setObjectName("surface")
+        section_layout = QVBoxLayout(section)
+        section_layout.setContentsMargins(Spacing.MD, Spacing.MD, Spacing.MD, Spacing.MD)
+        section_layout.setSpacing(Spacing.MD)
+
+        title = QLabel("Weather", section)
+        title.setFont(theme.font(theme.FontRole.DISPLAY))
+        section_layout.addWidget(title)
+
+        city_row = QHBoxLayout()
+        city_row.addWidget(QLabel("Default city", section))
+        self._default_city_entry = QLineEdit(settings.weather.default_city, section)
+        self._default_city_entry.editingFinished.connect(self._on_default_city_editing_finished)
+        city_row.addWidget(self._default_city_entry, 1)
+        section_layout.addLayout(city_row)
+
+        return section
+
+    def _on_default_city_editing_finished(self) -> None:
+        city = self._default_city_entry.text().strip()
+        if city:
+            self.default_city_changed.emit(city)
+
+    def _build_look_section(self, settings: Settings) -> QWidget:
+        section = QWidget(self)
+        section.setObjectName("surface")
+        section_layout = QVBoxLayout(section)
+        section_layout.setContentsMargins(Spacing.MD, Spacing.MD, Spacing.MD, Spacing.MD)
+        section_layout.setSpacing(Spacing.MD)
+
+        title = QLabel("Look", section)
+        title.setFont(theme.font(theme.FontRole.DISPLAY))
+        section_layout.addWidget(title)
+
+        accent_row = QHBoxLayout()
+        accent_row.addWidget(QLabel("Accent color", section))
+        self._accent_group = QButtonGroup(self)
+        for accent_name in ("cyan", "violet", "emerald", "amber"):
+            radio = QRadioButton(accent_name.capitalize(), section)
+            radio.setChecked(settings.ui.accent == accent_name)
+            radio.toggled.connect(
+                lambda checked, name=accent_name: checked and self.accent_changed.emit(name)
+            )
+            self._accent_group.addButton(radio)
+            accent_row.addWidget(radio)
+        accent_row.addStretch(1)
+        section_layout.addLayout(accent_row)
+
+        self._reduced_motion_checkbox = QCheckBox("Reduce motion", section)
+        self._reduced_motion_checkbox.setChecked(settings.ui.reduced_motion)
+        self._reduced_motion_checkbox.toggled.connect(self.reduced_motion_changed)
+        section_layout.addWidget(self._reduced_motion_checkbox)
 
         return section
 

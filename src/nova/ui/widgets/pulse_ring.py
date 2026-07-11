@@ -13,7 +13,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPaintEvent, QPen, QRadialGradient
 from PySide6.QtWidgets import QWidget
 
-from nova.ui.animations import easing_curve, make_variant_animation
+from nova.ui.animations import easing_curve, is_reduced_motion, make_variant_animation
 from nova.ui.theme import Color, Motion, accent_hex, with_alpha
 
 _DIAMETER = 160
@@ -100,6 +100,11 @@ class PulseRing(QWidget):
 
     def _apply_state_animation_params(self) -> None:
         duration_ms, easing_name, loop_count = _ANIMATION_PARAMS[self._state]
+        if is_reduced_motion() and loop_count == -1:
+            # docs/05 §10: "reduced motion disables loops/ripples" — plays once, settles at
+            # the end value, instead of looping forever (WCAG-style: the concern is
+            # *repeating* motion, not the single transition itself).
+            loop_count = 1
         self._animation.stop()
         self._animation.setDuration(duration_ms)
         self._animation.setEasingCurve(easing_curve(easing_name))
