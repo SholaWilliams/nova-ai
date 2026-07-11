@@ -63,5 +63,7 @@ def test_thinking_started_fires_before_the_slow_provider_call_returns() -> None:
 
     assert visible_activity_latency < _VISIBLE_ACTIVITY_BUDGET_S
     # sanity: the provider's simulated delay really did dominate the call, otherwise this
-    # test would pass trivially without proving anything about ordering.
-    assert total_elapsed >= _SIMULATED_NETWORK_DELAY_S
+    # test would pass trivially without proving anything about ordering. 10% slack absorbs
+    # OS timer/scheduler jitter around time.sleep()'s lower bound (observed ~1% short on
+    # this machine) without weakening what the check actually proves.
+    assert total_elapsed >= _SIMULATED_NETWORK_DELAY_S * 0.9
