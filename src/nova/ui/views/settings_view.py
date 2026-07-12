@@ -30,10 +30,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from nova.core.config import Settings
+from nova.core.config import Settings, get_data_dir
 from nova.core.models import AudioDeviceInfo
 from nova.ui import theme
 from nova.ui.theme import Color, Radius, Spacing
+from nova import __version__
 
 _PROVIDER_LABELS = {"gemini": "Gemini", "groq": "Groq"}
 
@@ -186,6 +187,7 @@ class SettingsView(QWidget):
         layout.addWidget(self._build_voice_section(settings))
         layout.addWidget(self._build_weather_section(settings))
         layout.addWidget(self._build_look_section(settings))
+        layout.addWidget(self._build_about_section())
         layout.addStretch(1)
 
     def _build_brain_section(self, settings: Settings) -> QWidget:
@@ -323,6 +325,59 @@ class SettingsView(QWidget):
         section_layout.addWidget(self._reduced_motion_checkbox)
 
         return section
+
+    def _build_about_section(self) -> QWidget:
+        """About section: version + logging folder link (Phase 14 §3, T-603)."""
+        section = QWidget(self)
+        section.setObjectName("surface")
+        section_layout = QVBoxLayout(section)
+        section_layout.setContentsMargins(Spacing.MD, Spacing.MD, Spacing.MD, Spacing.MD)
+        section_layout.setSpacing(Spacing.MD)
+
+        title = QLabel("About", section)
+        title.setFont(theme.font(theme.FontRole.DISPLAY))
+        section_layout.addWidget(title)
+
+        version_label = QLabel(f"NOVA v{__version__}", section)
+        version_label.setFont(theme.font(theme.FontRole.BODY))
+        section_layout.addWidget(version_label)
+
+        # Logging folder link (NFR-14)
+        logs_btn = QPushButton("Open logs folder", section)
+        logs_btn.setStyleSheet(theme.button_style(theme.ButtonRole.SECONDARY))
+        logs_btn.clicked.connect(self._open_logs_folder)
+        section_layout.addWidget(logs_btn)
+
+        return section
+
+    def _open_logs_folder(self) -> None:
+        """Open the logs directory in the file explorer (NFR-14)."""
+        from PySide6.QtGui import QDesktopServices
+        logs_path = get_data_dir() / "logs"
+        logs_path.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(logs_path.as_uri())
+
+    @property
+    def welcome_banner_visible(self) -> bool:
+        """Is the welcome banner shown? (M6 T-603)."""
+        return self._banner.isVisible() and "welcome" in self._banner.text().lower()
+
+    @welcome_banner_visible.setter
+    def welcome_banner_visible(self, value: bool) -> None:
+        """Show/hide the welcome banner on first run (M6 T-603)."""
+        if value:
+            self._banner.setText(
+                "Welcome to NOVA! To get started, add your API keys below. "
+                "You can still use the chat without keys (typed mode only)."
+            )
+            # Use a welcoming color instead of error red
+            self._banner.setStyleSheet(
+                f"background-color: {Color.ACCENT_PRIMARY}; color: {Color.TEXT_INVERSE}; "
+                f"border-radius: {Radius.CHIP}px; padding: {Spacing.SM}px {Spacing.MD}px;"
+            )
+            self._banner.setVisible(True)
+        else:
+            self._banner.setVisible(False)
 
     def set_input_devices(self, devices: list[AudioDeviceInfo]) -> None:
         """Called once at startup from `app.py` (FR-12) — `ui` can't enumerate devices
