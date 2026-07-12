@@ -344,7 +344,6 @@ class SettingsView(QWidget):
 
         # Logging folder link (NFR-14)
         logs_btn = QPushButton("Open logs folder", section)
-        logs_btn.setStyleSheet(theme.button_style(theme.ButtonRole.SECONDARY))
         logs_btn.clicked.connect(self._open_logs_folder)
         section_layout.addWidget(logs_btn)
 
