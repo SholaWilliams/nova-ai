@@ -370,9 +370,9 @@ class SettingsView(QWidget):
                 "Welcome to NOVA! To get started, add your API keys below. "
                 "You can still use the chat without keys (typed mode only)."
             )
-            # Use a welcoming color instead of error red
+            # Use a welcoming color (violet accent) instead of error red
             self._banner.setStyleSheet(
-                f"background-color: {Color.ACCENT_PRIMARY}; color: {Color.TEXT_INVERSE}; "
+                f"background-color: {Color.ACCENT_SECONDARY}; color: {Color.TEXT_INVERSE}; "
                 f"border-radius: {Radius.CHIP}px; padding: {Spacing.SM}px {Spacing.MD}px;"
             )
             self._banner.setVisible(True)
