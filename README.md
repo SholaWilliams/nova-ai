@@ -28,9 +28,11 @@ Unlike a chatbot, NOVA's "brain" is on display: watch it transcribe your voice, 
 
 ## Project status
 
-**📐 Documentation-first phase — no application code yet, by design.** The entire system is specified before implementation: vision, requirements, architecture, UI spec, agent design, tool specs, contracts, roadmap. Start at the **[documentation map](docs/00-documentation-map.md)**.
+**✅ v1.0.0 Released.** Complete implementation of all core subsystems: multi-provider LLM backend, speech I/O, 7 working tools, persistent memory, and a 9-stage honest pipeline visualization. All quality gates passing; tested on Windows 11 x64. See **[CHANGELOG](CHANGELOG.md)** for what's included.
 
-## Quickstart (once v1.0 ships)
+Codebase doubles as a reference implementation of a clean, modular agent architecture — small enough to read end-to-end. See **[documentation map](docs/00-documentation-map.md)** for design overview.
+
+## Quickstart
 
 1. Download `NOVA-vX.Y.Z-win64.zip` from [Releases], verify the checksum, unzip, run `NOVA.exe` (SmartScreen: *More info → Run anyway* — builds are unsigned).
 2. On first run, follow the in-app guide to add free API keys (Google Gemini + Groq).
