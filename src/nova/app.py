@@ -130,7 +130,7 @@ def _build_speech_service(secrets: Secrets, settings: Settings, bus: EventBus) -
     )
 
 
-def _show_first_run_if_needed(window: "MainWindow", secrets: Secrets) -> None:
+def _show_first_run_if_needed(window: MainWindow, secrets: Secrets) -> None:
     """M6 T-603: if no API keys configured, show Settings on first run (docs/14 §2, FR-47).
 
     The user can still use the app (typed mode only) without keys; Settings guides key entry.

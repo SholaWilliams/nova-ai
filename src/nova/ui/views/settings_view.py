@@ -30,11 +30,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from nova import __version__
 from nova.core.config import Settings, get_data_dir
 from nova.core.models import AudioDeviceInfo
 from nova.ui import theme
 from nova.ui.theme import Color, Radius, Spacing
-from nova import __version__
 
 _PROVIDER_LABELS = {"gemini": "Gemini", "groq": "Groq"}
 
@@ -353,6 +353,7 @@ class SettingsView(QWidget):
     def _open_logs_folder(self) -> None:
         """Open the logs directory in the file explorer (NFR-14)."""
         from PySide6.QtGui import QDesktopServices
+
         logs_path = get_data_dir() / "logs"
         logs_path.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(logs_path.as_uri())

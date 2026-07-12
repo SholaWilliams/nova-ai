@@ -9,15 +9,13 @@ in Settings once the user navigates there.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import QUrl
 
 from nova.ui import theme
 from nova.ui.theme import Color, Spacing
