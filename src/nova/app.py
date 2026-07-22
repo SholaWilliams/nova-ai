@@ -130,6 +130,18 @@ def _build_speech_service(secrets: Secrets, settings: Settings, bus: EventBus) -
     )
 
 
+def _show_first_run_if_needed(window: MainWindow, secrets: Secrets) -> None:
+    """M6 T-603: if no API keys configured, show Settings on first run (docs/14 §2, FR-47).
+
+    The user can still use the app (typed mode only) without keys; Settings guides key entry.
+    """
+    # ponytail: simple check, not exhaustive. Keys may be set via env vars directly without
+    # the settings UI knowing — but the common first-run path is empty → Settings → key entry.
+    if not secrets.gemini_api_key and not secrets.groq_api_key:
+        window.settings_view.welcome_banner_visible = True
+        window._stack.setCurrentIndex(1)  # _SETTINGS_PAGE (docs/05 §6.3, T-209)
+
+
 def main() -> int:
     """Build and run the app. Returns the process exit code."""
     install_excepthook()  # active before anything else can go wrong
@@ -149,6 +161,8 @@ def main() -> int:
     EventLogBridge(bus)
 
     window = MainWindow(bus, settings)
+    # M6 T-603: first-run welcome — auto-show Settings if no keys configured yet.
+    _show_first_run_if_needed(window, secrets)
 
     provider_manager = ProviderManager(
         _build_providers(secrets, settings), settings.provider.active
