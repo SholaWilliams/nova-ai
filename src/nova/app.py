@@ -36,6 +36,7 @@ from nova.providers.base import LLMProvider
 from nova.providers.gemini import GeminiProvider
 from nova.providers.groq import GroqProvider
 from nova.providers.manager import ProviderManager
+from nova.providers.openrouter import OpenRouterProvider
 from nova.speech.audio import AudioCapture, list_input_devices, list_output_devices
 from nova.speech.service import SpeechService
 from nova.speech.stt.base import STTEngine
@@ -56,8 +57,12 @@ from nova.ui.animations import set_reduced_motion
 from nova.ui.main_window import MainWindow
 from nova.ui.theme import build_stylesheet
 
-_ENV_KEY_NAMES = {"gemini": "NOVA_GEMINI_API_KEY", "groq": "NOVA_GROQ_API_KEY"}
-_PROVIDER_LABELS = {"gemini": "Gemini", "groq": "Groq"}
+_ENV_KEY_NAMES = {
+    "gemini": "NOVA_GEMINI_API_KEY",
+    "groq": "NOVA_GROQ_API_KEY",
+    "openrouter": "NOVA_OPENROUTER_API_KEY",
+}
+_PROVIDER_LABELS = {"gemini": "Gemini", "groq": "Groq", "openrouter": "OpenRouter"}
 _NO_STT_KEY_MESSAGE = "I can't hear right now — you can type to me!"
 
 
@@ -83,12 +88,16 @@ def _build_provider(name: str, secrets: Secrets, settings: Settings) -> LLMProvi
         return GeminiProvider(api_key=secrets.gemini_api_key, model=settings.provider.gemini_model)
     if name == "groq" and secrets.groq_api_key:
         return GroqProvider(api_key=secrets.groq_api_key, model=settings.provider.groq_model)
+    if name == "openrouter" and secrets.openrouter_api_key:
+        return OpenRouterProvider(
+            api_key=secrets.openrouter_api_key, model=settings.provider.openrouter_model
+        )
     return None
 
 
 def _build_providers(secrets: Secrets, settings: Settings) -> dict[str, LLMProvider]:
     providers: dict[str, LLMProvider] = {}
-    for name in ("gemini", "groq"):
+    for name in ("gemini", "groq", "openrouter"):
         provider = _build_provider(name, secrets, settings)
         if provider is not None:
             providers[name] = provider
@@ -137,7 +146,7 @@ def _show_first_run_if_needed(window: MainWindow, secrets: Secrets) -> None:
     """
     # ponytail: simple check, not exhaustive. Keys may be set via env vars directly without
     # the settings UI knowing — but the common first-run path is empty → Settings → key entry.
-    if not secrets.gemini_api_key and not secrets.groq_api_key:
+    if not secrets.gemini_api_key and not secrets.groq_api_key and not secrets.openrouter_api_key:
         window.settings_view.welcome_banner_visible = True
         window._stack.setCurrentIndex(1)  # _SETTINGS_PAGE (docs/05 §6.3, T-209)
 
@@ -149,7 +158,7 @@ def main() -> int:
     data_dir = get_data_dir()
     secrets = Secrets.load(data_dir=data_dir)
     setup_logging(data_dir, level=secrets.log_level)
-    register_secrets(secrets.gemini_api_key, secrets.groq_api_key)
+    register_secrets(secrets.gemini_api_key, secrets.groq_api_key, secrets.openrouter_api_key)
 
     settings = load_settings(data_dir / "settings.json")
 
@@ -303,7 +312,7 @@ def main() -> int:
         nonlocal secrets
         write_secret_to_env(data_dir, _ENV_KEY_NAMES[name], value)
         secrets = Secrets.load(data_dir=data_dir)
-        register_secrets(secrets.gemini_api_key, secrets.groq_api_key)
+        register_secrets(secrets.gemini_api_key, secrets.groq_api_key, secrets.openrouter_api_key)
 
         provider = _build_provider(name, secrets, settings)
         window.settings_view.set_key_configured(name, provider is not None)
@@ -367,7 +376,7 @@ def main() -> int:
     window.settings_view.accent_changed.connect(_on_accent_changed)
     window.settings_view.reduced_motion_changed.connect(_on_reduced_motion_changed)
 
-    for name in ("gemini", "groq"):
+    for name in ("gemini", "groq", "openrouter"):
         window.settings_view.set_key_configured(name, name in provider_manager.configured_names)
 
     if provider_manager.configured_names:

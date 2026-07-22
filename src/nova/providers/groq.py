@@ -19,6 +19,7 @@ from groq import _exceptions as groq_errors
 
 from nova.core.errors import AuthError, RateLimited, Transient
 from nova.core.models import ChatMessage, ToolCall, ToolSchema
+from nova.providers._openai_compat import to_openai_message, to_openai_tool
 from nova.providers.base import (
     GenerateOptions,
     LLMProvider,
@@ -56,13 +57,22 @@ class GroqProvider(LLMProvider):
     ) -> LLMResponse:
         kwargs: dict[str, Any] = {
             "model": self._model,
-            "messages": [_to_groq_message(message) for message in messages],
+            "messages": [to_openai_message(message) for message in messages],
             "temperature": opts.temperature,
             "max_tokens": opts.max_tokens,
             "timeout": opts.timeout_s,
+            # gpt-oss-120b (docs/10 TD-4) is a reasoning model; without this its chain-of-
+            # thought leaks straight into `content` and can eat the whole max_tokens budget
+            # before the real answer, producing truncated/garbled replies (surfaced once
+            # M5's memory block made prompts long enough to trigger longer reasoning).
+            # ⚠️ Even with this set, the garble can still surface (2026-07-22 field report) —
+            # if it recurs, docs/10 §5's OpenRouter provider is the documented escape hatch:
+            # point Settings at a non-reasoning model instead of tuning this further.
+            "reasoning_effort": "low",
+            "reasoning_format": "hidden",
         }
         if tools:
-            kwargs["tools"] = [_to_groq_tool(tool) for tool in tools]
+            kwargs["tools"] = [to_openai_tool(tool) for tool in tools]
 
         try:
             response = self._client.chat.completions.create(**kwargs)
@@ -95,43 +105,6 @@ class GroqProvider(LLMProvider):
     @property
     def capabilities(self) -> ProviderCaps:
         return ProviderCaps(tool_calling=True, max_context=131_072, safety_settings=False)
-
-
-def _to_groq_message(message: ChatMessage) -> dict[str, Any]:
-    if message.role == "tool":
-        return {
-            "role": "tool",
-            "content": message.content or "",
-            "tool_call_id": message.tool_call_id or "",
-        }
-    if message.role == "assistant" and message.tool_calls:
-        return {
-            "role": "assistant",
-            "content": message.content,
-            "tool_calls": [
-                {
-                    "id": call.call_id,
-                    "type": "function",
-                    "function": {
-                        "name": call.tool_name,
-                        "arguments": json.dumps(call.arguments),
-                    },
-                }
-                for call in message.tool_calls
-            ],
-        }
-    return {"role": message.role, "content": message.content or ""}
-
-
-def _to_groq_tool(tool: ToolSchema) -> dict[str, Any]:
-    return {
-        "type": "function",
-        "function": {
-            "name": tool.name,
-            "description": tool.description,
-            "parameters": tool.parameters,
-        },
-    }
 
 
 def _to_llm_response(response: Any) -> LLMResponse:

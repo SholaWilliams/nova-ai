@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -36,7 +37,7 @@ from nova.core.models import AudioDeviceInfo
 from nova.ui import theme
 from nova.ui.theme import Color, Radius, Spacing
 
-_PROVIDER_LABELS = {"gemini": "Gemini", "groq": "Groq"}
+_PROVIDER_LABELS = {"gemini": "Gemini", "groq": "Groq", "openrouter": "OpenRouter"}
 
 # pocket-tts's built-in, non-gated voice catalog (docs/04 TD-6 revision, confirmed against
 # the installed package — voice-cloning hf:// URLs need gated HF access, these plain names
@@ -103,7 +104,7 @@ class _KeyRow(QWidget):
 
         self._toggle_button = QPushButton("Show", self)
         self._toggle_button.setCheckable(True)
-        self._toggle_button.setFixedWidth(64)
+        self._toggle_button.setFixedWidth(80)  # 64 clipped "Show"/"Hide" under the button padding
         self._toggle_button.clicked.connect(self._on_toggle_visibility)
         row.addWidget(self._toggle_button)
 
@@ -169,7 +170,11 @@ class SettingsView(QWidget):
     def __init__(self, settings: Settings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
-        layout = QVBoxLayout(self)
+        # All five sections stacked here total ~1000px — taller than the window on most
+        # screens. Without a scroll area the QStackedWidget just clips them (sections looked
+        # empty / cut off); wrap the column in a QScrollArea so it scrolls instead.
+        content = QWidget()
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(Spacing.LG, Spacing.LG, Spacing.LG, Spacing.LG)
         layout.setSpacing(Spacing.LG)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -190,6 +195,15 @@ class SettingsView(QWidget):
         layout.addWidget(self._build_about_section())
         layout.addStretch(1)
 
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setWidget(content)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(scroll)
+
     def _build_brain_section(self, settings: Settings) -> QWidget:
         section = QWidget(self)
         section.setObjectName("surface")
@@ -202,7 +216,7 @@ class SettingsView(QWidget):
         section_layout.addWidget(title)
 
         self._radio_group = QButtonGroup(self)
-        for name in ("gemini", "groq"):
+        for name in ("gemini", "groq", "openrouter"):
             radio = QRadioButton(_PROVIDER_LABELS[name], section)
             radio.setChecked(settings.provider.active == name)
             radio.toggled.connect(
@@ -214,7 +228,7 @@ class SettingsView(QWidget):
             section_layout.addWidget(radio)
 
         self._key_rows: dict[str, _KeyRow] = {}
-        for name in ("gemini", "groq"):
+        for name in ("gemini", "groq", "openrouter"):
             row = _KeyRow(name, section)
             row.key_changed.connect(self.key_changed)
             row.test_requested.connect(self.test_requested)

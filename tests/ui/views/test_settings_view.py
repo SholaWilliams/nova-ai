@@ -46,7 +46,7 @@ def test_selecting_a_radio_emits_provider_selected(view: SettingsView, qtbot: ob
 
 
 def test_each_provider_gets_a_key_row(view: SettingsView) -> None:
-    assert set(view._key_rows) == {"gemini", "groq"}
+    assert set(view._key_rows) == {"gemini", "groq", "openrouter"}
 
 
 def test_key_entry_defaults_to_password_echo_mode(view: SettingsView) -> None:
