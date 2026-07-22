@@ -1,11 +1,21 @@
 """Unit tests for nova.ui.main_window — layout construction, chat/settings wiring (T-208/T-209)."""
 
+from datetime import UTC, datetime
+
 import pytest
 from PySide6.QtCore import Qt, QTimer
 
 from nova.core.config import Settings
 from nova.core.events import EventBus, PipelineStage
-from nova.core.models import AssistantReply, ProviderStatus, Transcript, UserInput
+from nova.core.models import (
+    AssistantReply,
+    MemoryItem,
+    ProviderStatus,
+    SessionMeta,
+    Transcript,
+    TurnRecord,
+    UserInput,
+)
 from nova.ui.main_window import MainWindow
 from nova.ui.theme import Color
 from nova.ui.widgets.stage_chip import ChipState
@@ -62,8 +72,8 @@ def test_nav_buttons_enabled_state(window: MainWindow) -> None:
     assert len(window._nav_buttons) == 4
     assert window._nav_buttons["house"].isEnabled()
     assert window._nav_buttons["settings"].isEnabled()
-    assert not window._nav_buttons["history"].isEnabled()  # History lands in M5
-    assert not window._nav_buttons["brain"].isEnabled()  # Memory lands in M5
+    assert window._nav_buttons["history"].isEnabled()  # M5
+    assert window._nav_buttons["brain"].isEnabled()  # M5
 
 
 # ── settings navigation (T-209) ───────────────────────────────────────
@@ -342,6 +352,121 @@ def test_set_voice_mode_offline_shows_the_backup_voice_indicator(window: MainWin
 
     window.set_voice_mode("primary")
     assert window._voice_status_label.isHidden()
+
+
+# ── Memory View / History drawer (M5) ──────────────────────────────────
+
+
+def _fact(content: str = "Has a dog", fact_id: str = "f_1") -> MemoryItem:
+    return MemoryItem(
+        id=fact_id,
+        kind="fact",
+        content=content,
+        keywords=(),
+        created_at=datetime.now(UTC),
+        source_request="req_1",
+    )
+
+
+def _session(session_id: str = "s_1", title: str = "hello") -> SessionMeta:
+    return SessionMeta(session_id=session_id, started_at=datetime.now(UTC), title=title, turns=1)
+
+
+def test_memory_nav_switches_to_memory_page_and_hides_input_bar(window: MainWindow) -> None:
+    window._nav_buttons["brain"].click()
+
+    assert window._stack.currentWidget() is window._memory_view
+    assert window._input_bar.isHidden()
+
+
+def test_set_memory_facts_forwards_to_the_memory_view(window: MainWindow) -> None:
+    window.set_memory_facts([_fact(), _fact(fact_id="f_2")])
+    assert window._memory_view.card_count() == 2
+
+
+def test_memory_view_delete_forwards_to_delete_fact_requested(
+    window: MainWindow, qtbot: object
+) -> None:
+    window.set_memory_facts([_fact(fact_id="f_9")])
+    card = window._memory_view._column_layout.itemAt(0).widget()
+
+    with qtbot.waitSignal(window.delete_fact_requested, timeout=1000) as blocker:  # type: ignore[attr-defined]
+        card.delete_requested.emit("f_9")
+
+    assert blocker.args == ["f_9"]
+
+
+def test_history_dock_hidden_by_default(window: MainWindow) -> None:
+    assert window._history_dock.isHidden()
+
+
+def test_history_nav_toggles_the_dock(window: MainWindow) -> None:
+    window._nav_buttons["history"].click()
+    assert not window._history_dock.isHidden()
+
+    window._nav_buttons["history"].click()
+    assert window._history_dock.isHidden()
+
+
+def test_set_sessions_populates_the_list(window: MainWindow) -> None:
+    window.set_sessions([_session("s_1", "first chat"), _session("s_2", "second chat")])
+
+    assert window._session_list.count() == 2
+    assert "first chat" in window._session_list.item(0).text()
+
+
+def test_clicking_a_session_emits_session_selected(window: MainWindow, qtbot: object) -> None:
+    window.set_sessions([_session("s_42", "hello there")])
+
+    with qtbot.waitSignal(window.session_selected, timeout=1000) as blocker:  # type: ignore[attr-defined]
+        window._session_list.item(0).setSelected(True)
+        window._on_session_item_clicked(window._session_list.item(0))
+
+    assert blocker.args == ["s_42"]
+
+
+def test_new_conversation_clears_chat_and_emits_signal(window: MainWindow, qtbot: object) -> None:
+    window._entry.setText("hi")
+    window._send_button.click()
+    window.on_reply_ready(AssistantReply(request_id="req_1", text="hello!", spoken_text="hello!"))
+    assert window._chat_view.bubble_count() == 2
+
+    with qtbot.waitSignal(window.new_conversation_requested, timeout=1000):  # type: ignore[attr-defined]
+        window._on_new_conversation_clicked()
+
+    assert window._chat_view.bubble_count() == 0
+
+
+def test_show_session_replay_populates_read_only_view_and_switches_page(
+    window: MainWindow,
+) -> None:
+    turns = [
+        TurnRecord(
+            request_id="req_1",
+            ts=datetime.now(UTC),
+            user_text="what's the weather?",
+            user_source="typed",
+            assistant_text="It's sunny!",
+            tools=(),
+            stages=(),
+        )
+    ]
+
+    window.show_session_replay(turns)
+
+    assert window._history_chat_view.bubble_count() == 2
+    assert window._stack.currentWidget() is window._stack.widget(3)
+    assert window._input_bar.isHidden()
+
+
+def test_back_to_today_returns_to_home_page(window: MainWindow) -> None:
+    window.show_session_replay([])
+    back_button = window._stack.widget(3).layout().itemAt(0).widget()
+
+    back_button.click()
+
+    assert window._stack.currentIndex() == 0
+    assert not window._input_bar.isHidden()
 
 
 class TestConfirmationGateWiring:

@@ -16,6 +16,7 @@ from nova.agent.agent import Agent
 from nova.agent.executor import Executor
 from nova.agent.planner import Planner, load_system_prompt
 from nova.agent.router import Router
+from nova.agent.stage_recorder import StageRecorder
 from nova.agent.state import ConversationState
 from nova.agent.worker import AgentWorker
 from nova.core.config import (
@@ -29,7 +30,8 @@ from nova.core.config import (
 from nova.core.errors import SpeechError, install_excepthook
 from nova.core.events import EventBus
 from nova.core.logging import EventLogBridge, register_secrets, setup_logging
-from nova.core.models import ProviderStatus, Transcript
+from nova.core.models import AssistantReply, ProviderStatus, Transcript
+from nova.memory.service import MemoryService
 from nova.providers.base import LLMProvider
 from nova.providers.gemini import GeminiProvider
 from nova.providers.groq import GroqProvider
@@ -47,9 +49,10 @@ from nova.tools.browser import BrowserTool
 from nova.tools.calculator import CalculatorTool
 from nova.tools.desktop_organizer import DesktopOrganizerTool
 from nova.tools.file_search import FileSearchTool
-from nova.tools.memory_tool import InMemoryFacade, MemoryTool
+from nova.tools.memory_tool import MemoryTool
 from nova.tools.registry import ToolRegistry
 from nova.tools.weather import WeatherTool
+from nova.ui.animations import set_reduced_motion
 from nova.ui.main_window import MainWindow
 from nova.ui.theme import build_stylesheet
 
@@ -140,6 +143,7 @@ def main() -> int:
 
     app = QApplication(sys.argv)
     app.setStyleSheet(build_stylesheet(settings.ui.accent))
+    set_reduced_motion(settings.ui.reduced_motion)
 
     bus = EventBus()
     EventLogBridge(bus)
@@ -150,9 +154,10 @@ def main() -> int:
         _build_providers(secrets, settings), settings.provider.active
     )
     registry = _build_registry(secrets, settings, data_dir)
-    # ponytail: InMemoryFacade is the M3 stub — M5's MemoryService replaces it (same protocol)
-    tool_ctx = ToolContext(settings=settings, memory=InMemoryFacade())
+    memory_service = MemoryService(data_dir)  # M5: replaces the M3 InMemoryFacade stub
+    tool_ctx = ToolContext(settings=settings, memory=memory_service)
     executor = Executor(registry, bus, tool_ctx, tool_timeout_s=settings.advanced.tool_timeout_s)
+    stage_recorder = StageRecorder(bus)
     agent = Agent(
         provider_manager,
         Planner(load_system_prompt()),
@@ -161,6 +166,8 @@ def main() -> int:
         bus,
         registry=registry,
         executor=executor,
+        memory=memory_service,
+        stage_recorder=stage_recorder,
     )
     worker = AgentWorker(agent)
     agent_thread = QThread()
@@ -180,6 +187,45 @@ def main() -> int:
     # Same reasoning as cancel: the worker thread is *blocked* inside the Executor's
     # confirmation gate — the answer must arrive as a direct call, not a queued slot.
     window.confirmation_answered.connect(worker.confirm, Qt.ConnectionType.DirectConnection)
+
+    # M5: Memory View + History drawer (docs/05 §6.4/§6.5, FR-32/33/5/6)
+    def _refresh_memory_view() -> None:
+        window.set_memory_facts(memory_service.list_facts())
+
+    def _refresh_sessions() -> None:
+        window.set_sessions(memory_service.list_sessions())
+
+    def _on_reply_landed(reply: AssistantReply) -> None:
+        del reply
+        _refresh_memory_view()
+        _refresh_sessions()
+
+    def _on_delete_fact_requested(fact_id: str) -> None:
+        memory_service.delete_fact(fact_id)
+        _refresh_memory_view()
+
+    def _on_clear_facts_requested() -> None:
+        memory_service.clear_facts()
+        _refresh_memory_view()
+
+    def _on_session_selected(session_id: str) -> None:
+        window.show_session_replay(memory_service.load_session(session_id))
+
+    def _on_new_conversation_requested() -> None:
+        memory_service.start_new_session()
+        _refresh_sessions()
+
+    worker.reply_ready.connect(_on_reply_landed)
+    window.delete_fact_requested.connect(_on_delete_fact_requested)
+    window.clear_facts_requested.connect(_on_clear_facts_requested)
+    window.session_selected.connect(_on_session_selected)
+    # Queued (default), not direct — see Agent.new_conversation()'s docstring: nothing to
+    # preempt mid-flight, so this doesn't need the cancel/confirm treatment.
+    window.new_conversation_requested.connect(worker.new_conversation)
+    window.new_conversation_requested.connect(_on_new_conversation_requested)
+
+    _refresh_memory_view()
+    _refresh_sessions()
 
     # M4: two more dedicated worker threads (docs/03 §5), the exact AgentWorker cross-thread
     # idiom applied twice more rather than a new one (TD-3).
@@ -287,6 +333,25 @@ def main() -> int:
     window.settings_view.output_device_changed.connect(_on_output_device_changed)
     window.settings_view.set_input_devices(list_input_devices())
     window.settings_view.set_output_devices(list_output_devices())
+
+    def _on_default_city_changed(city: str) -> None:
+        settings.weather.default_city = city
+        save_settings(settings, data_dir / "settings.json")
+
+    def _on_accent_changed(accent: str) -> None:
+        settings.ui.accent = accent  # type: ignore[assignment]
+        save_settings(settings, data_dir / "settings.json")
+        app.setStyleSheet(build_stylesheet(accent))
+        window.pipeline_view.set_accent(accent)
+
+    def _on_reduced_motion_changed(enabled: bool) -> None:
+        settings.ui.reduced_motion = enabled
+        save_settings(settings, data_dir / "settings.json")
+        set_reduced_motion(enabled)
+
+    window.settings_view.default_city_changed.connect(_on_default_city_changed)
+    window.settings_view.accent_changed.connect(_on_accent_changed)
+    window.settings_view.reduced_motion_changed.connect(_on_reduced_motion_changed)
 
     for name in ("gemini", "groq"):
         window.settings_view.set_key_configured(name, name in provider_manager.configured_names)

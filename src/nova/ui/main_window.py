@@ -15,9 +15,12 @@ from datetime import UTC, datetime
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
+    QDockWidget,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QPushButton,
     QSplitter,
@@ -29,11 +32,20 @@ from PySide6.QtWidgets import (
 from nova.core.config import Settings
 from nova.core.events import EventBus, EventStatus, PipelineEvent, PipelineStage
 from nova.core.ids import new_request_id
-from nova.core.models import AssistantReply, ProviderStatus, Transcript, UserInput
+from nova.core.models import (
+    AssistantReply,
+    MemoryItem,
+    ProviderStatus,
+    SessionMeta,
+    Transcript,
+    TurnRecord,
+    UserInput,
+)
 from nova.ui import theme
 from nova.ui.debug_emitter import emit_fake_pipeline
 from nova.ui.theme import Color, Spacing
 from nova.ui.views.chat_view import ChatView
+from nova.ui.views.memory_view import MemoryView
 from nova.ui.views.pipeline_view import PipelineView
 from nova.ui.views.settings_view import SettingsView
 from nova.ui.widgets.confirm_dialog import ConfirmDialog
@@ -55,6 +67,9 @@ _NAV_ICONS: tuple[tuple[str, str], ...] = (
 )
 _HOME_PAGE = 0
 _SETTINGS_PAGE = 1
+_MEMORY_PAGE = 2
+_HISTORY_REPLAY_PAGE = 3
+_SESSION_ID_ROLE = Qt.ItemDataRole.UserRole
 _STATUS_COLOR_FOR_MODE = {
     "normal": Color.TEXT_SECONDARY,
     "fallback": Color.STATE_WARNING,
@@ -72,6 +87,10 @@ class MainWindow(QMainWindow):
     mic_repressed = Signal()  # re-press while listening: stop capturing, transcribe buffered
     listening_cancelled = Signal()  # Esc while listening: discard, no STT (docs/08 §2)
     stop_speaking_requested = Signal()  # speaker glyph / mic press / new input (FR-13)
+    delete_fact_requested = Signal(str)  # fact id (FR-33, M5)
+    clear_facts_requested = Signal()  # M5
+    session_selected = Signal(str)  # session id (FR-5/6, M5)
+    new_conversation_requested = Signal()  # M5
 
     def __init__(self, bus: EventBus, settings: Settings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -105,14 +124,21 @@ class MainWindow(QMainWindow):
         self._pipeline_view.setVisible(settings.ui.pipeline_visible)
 
         self._settings_view = SettingsView(settings)
+        self._memory_view = MemoryView()
+        self._memory_view.delete_requested.connect(self.delete_fact_requested)
+        self._memory_view.clear_all_requested.connect(self.clear_facts_requested)
 
         self._stack = QStackedWidget(central)
         self._stack.addWidget(splitter)  # index _HOME_PAGE
         self._stack.addWidget(self._settings_view)  # index _SETTINGS_PAGE
+        self._stack.addWidget(self._memory_view)  # index _MEMORY_PAGE
+        self._stack.addWidget(self._build_history_replay_page())  # index _HISTORY_REPLAY_PAGE
         root.addWidget(self._stack, 1)
 
         self._input_bar = self._build_input_bar()
         root.addWidget(self._input_bar)
+
+        self._build_history_dock()
 
         self._confirm_dialog: ConfirmDialog | None = None
         # EventBus delivers on the main thread (queued) — safe to open a modal from here.
@@ -208,11 +234,13 @@ class MainWindow(QMainWindow):
         settings_button.setToolTip("Settings")
         settings_button.clicked.connect(self._show_settings_page)
 
-        for icon_name in ("history", "brain"):
-            button = self._nav_buttons[icon_name]
-            label = dict(_NAV_ICONS)[icon_name]
-            button.setToolTip(f"{label} (coming soon)")
-            button.setEnabled(False)  # nav views land in later milestones
+        history_button = self._nav_buttons["history"]
+        history_button.setToolTip("History")
+        history_button.clicked.connect(self._toggle_history_dock)
+
+        memory_button = self._nav_buttons["brain"]
+        memory_button.setToolTip("Memory")
+        memory_button.clicked.connect(self._show_memory_page)
 
         return header
 
@@ -222,6 +250,90 @@ class MainWindow(QMainWindow):
 
     def _show_settings_page(self) -> None:
         self._stack.setCurrentIndex(_SETTINGS_PAGE)
+        self._input_bar.setVisible(False)
+
+    def _show_memory_page(self) -> None:
+        self._stack.setCurrentIndex(_MEMORY_PAGE)
+        self._input_bar.setVisible(False)
+
+    # ── Memory View (docs/05 §6.4, FR-32/33, M5) ────────────────────────
+
+    def set_memory_facts(self, facts: list[MemoryItem]) -> None:
+        """Connect from `app.py` after any add/delete/clear (FR-32)."""
+        self._memory_view.set_facts(facts)
+
+    # ── History drawer (docs/05 §6.5, FR-5/6, M5) ───────────────────────
+
+    def _build_history_dock(self) -> None:
+        self._history_dock = QDockWidget("History", self)
+        self._history_dock.setVisible(False)
+        self._history_dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetClosable
+            | QDockWidget.DockWidgetFeature.DockWidgetMovable
+        )
+
+        panel = QWidget(self._history_dock)
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(Spacing.SM, Spacing.SM, Spacing.SM, Spacing.SM)
+        panel_layout.setSpacing(Spacing.SM)
+
+        new_conversation_button = QPushButton("New conversation", panel)
+        new_conversation_button.clicked.connect(self._on_new_conversation_clicked)
+        panel_layout.addWidget(new_conversation_button)
+
+        self._session_list = QListWidget(panel)
+        self._session_list.itemClicked.connect(self._on_session_item_clicked)
+        panel_layout.addWidget(self._session_list, 1)
+
+        self._history_dock.setWidget(panel)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._history_dock)
+
+    def _toggle_history_dock(self) -> None:
+        # `isHidden()` (the widget's own explicit flag) rather than `isVisible()` (which
+        # also depends on the whole ancestor chain being shown) — see the pytest-qt gotcha
+        # this codebase already documents: isVisible() is unreliable before the window's
+        # first real `.show()`, so toggle logic shouldn't depend on it either.
+        self._history_dock.setVisible(self._history_dock.isHidden())
+
+    def _on_new_conversation_clicked(self) -> None:
+        self._chat_view.clear()
+        self.new_conversation_requested.emit()
+
+    def _on_session_item_clicked(self, item: QListWidgetItem) -> None:
+        session_id = item.data(_SESSION_ID_ROLE)
+        self.session_selected.emit(session_id)
+
+    def set_sessions(self, sessions: list[SessionMeta]) -> None:
+        """Connect from `app.py` whenever the drawer is opened / a turn is persisted."""
+        self._session_list.clear()
+        for session in sessions:
+            label = f"{session.title} — {session.started_at:%Y-%m-%d}"
+            item = QListWidgetItem(label)
+            item.setData(_SESSION_ID_ROLE, session.session_id)
+            self._session_list.addItem(item)
+
+    def _build_history_replay_page(self) -> QWidget:
+        page = QWidget(self)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        back_button = QPushButton("← Back to today", page)
+        back_button.clicked.connect(self._show_home_page)
+        layout.addWidget(back_button, 0)
+
+        self._history_chat_view = ChatView(page)
+        layout.addWidget(self._history_chat_view, 1)
+        return page
+
+    def show_session_replay(self, turns: list[TurnRecord]) -> None:
+        """Connect from `app.py` after `MemoryService.load_session()` (read-only replay —
+        the live `ChatView`/`ConversationState` are never touched)."""
+        self._history_chat_view.clear()
+        for turn in turns:
+            self._history_chat_view.add_user_message(turn.user_text)
+            self._history_chat_view.add_nova_message(turn.assistant_text)
+        self._stack.setCurrentIndex(_HISTORY_REPLAY_PAGE)
         self._input_bar.setVisible(False)
 
     def set_provider_status(self, status: ProviderStatus) -> None:

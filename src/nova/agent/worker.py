@@ -64,6 +64,12 @@ class AgentWorker(QObject):
         confirmation gate, so a queued slot would never be delivered in time."""
         self._agent.confirm(call_id, approved)
 
+    def new_conversation(self) -> None:
+        """Slot — connect with the default **queued** (cross-thread) connection, unlike
+        `cancel_current()`/`confirm()`: see `Agent.new_conversation()`'s docstring for why
+        this one doesn't need to preempt a blocked call."""
+        self._agent.new_conversation()
+
     def cancel_current(self) -> None:
         """Call directly (never via a queued connection) from any thread.
 

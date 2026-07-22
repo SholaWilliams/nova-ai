@@ -6,6 +6,13 @@ M3: real tool iterations. `ProviderManager.generate()` receives the registry's s
 a `ToolRoute` dispatches sequentially through the `Executor` (validate -> confirm -> run ->
 normalize), results are fed back as `tool`-role messages, and the loop continues until a
 `DirectAnswer` or the iteration cap (FR-17).
+
+M5: optional `MemoryService` wiring (both new constructor params default to `None`, so every
+M2/M3 call site and test keeps working unchanged). When present: `get_context()` feeds the
+Planner's memory block, REMEMBERING reflects a real `memory_tool` "store" this turn instead
+of always-`skipped`, and `persist_turn()` archives the turn silently (docs/09 §1: automatic,
+no pipeline event of its own) using `StageRecorder` to gather the stages emitted by every
+component on this bus, not just Agent's own.
 """
 
 from __future__ import annotations
@@ -18,15 +25,25 @@ from typing import Any
 from nova.agent.executor import Executor
 from nova.agent.planner import Planner, thinking_summary
 from nova.agent.router import DirectAnswer, RepairRoute, Router, ToolRoute
+from nova.agent.stage_recorder import StageRecorder
 from nova.agent.state import ConversationState
 from nova.core.errors import ProviderError, SafetyBlocked
 from nova.core.events import EventBus, EventStatus, PipelineEvent, PipelineStage
-from nova.core.models import AssistantReply, ChatMessage, ToolResult, UserInput
+from nova.core.models import (
+    AssistantReply,
+    ChatMessage,
+    ToolCallRecord,
+    ToolResult,
+    TurnRecord,
+    UserInput,
+)
+from nova.memory.service import MemoryService
 from nova.providers.base import GenerateOptions
 from nova.providers.manager import ProviderManager
 from nova.tools.registry import ToolRegistry
 
 _MAX_TOOL_RESULT_CHARS = 1024  # docs/06 §5: larger results are summarized before appending
+_MEMORY_TOOL_NAME = "memory_tool"
 
 
 def _result_envelope(result: ToolResult) -> str:
@@ -74,6 +91,8 @@ class Agent:
         registry: ToolRegistry | None = None,
         executor: Executor | None = None,
         opts: GenerateOptions | None = None,
+        memory: MemoryService | None = None,
+        stage_recorder: StageRecorder | None = None,
     ) -> None:
         self._provider_manager = provider_manager
         self._planner = planner
@@ -83,7 +102,11 @@ class Agent:
         self._registry = registry or ToolRegistry()
         self._executor = executor
         self._opts = opts or GenerateOptions()
+        self._memory = memory
+        self._stage_recorder = stage_recorder
         self._cancel_requested = False
+        self._memory_written_this_turn = False
+        self._tool_records_this_turn: list[ToolCallRecord] = []
 
     def confirm(self, call_id: str, approved: bool) -> None:
         """Answer a pending sensitive-tool confirmation (docs/11 §4).
@@ -93,6 +116,13 @@ class Agent:
         """
         if self._executor is not None:
             self._executor.resolve_confirmation(call_id, approved)
+
+    def new_conversation(self) -> None:
+        """ "New conversation" (docs/05 §6.5, History drawer) — drops the working chat
+        history. Unlike `cancel()`/`confirm()`, this is safe as a normal **queued** slot
+        (via `AgentWorker.new_conversation`): there's nothing to interrupt mid-flight, since
+        the UI only offers this button while no request is in progress."""
+        self._state.clear()
 
     def cancel(self) -> None:
         """Request cancellation of whichever request is currently in `handle()`.
@@ -109,12 +139,17 @@ class Agent:
     def handle(self, user_input: UserInput) -> AssistantReply:
         """Handle one user request end-to-end, emitting real pipeline events throughout."""
         self._cancel_requested = False
+        self._memory_written_this_turn = False
+        self._tool_records_this_turn = []
         request_id = user_input.request_id
+
+        if self._memory is not None:
+            self._memory.begin_request(request_id)
 
         if user_input.source == "typed":
             # docs/03 §8 line 367: typed input gets these emitted as skipped, not silently
-            # omitted — SpeechService (voice, M4) will already have emitted the real ones
-            # before handle() is even called for voice-sourced input (hence the guard).
+            # omitted — SpeechService (M4) will already have emitted the real ones before
+            # handle() is even called for voice-sourced input (hence the guard).
             self._emit(request_id, PipelineStage.LISTENING, EventStatus.SKIPPED, "Listening…")
             self._emit(
                 request_id,
@@ -128,7 +163,8 @@ class Agent:
         thinking_started = time.monotonic()
 
         history = self._state.snapshot()
-        messages = self._planner.build(user_input, history)
+        memory_context = self._memory.get_context(user_input) if self._memory is not None else None
+        messages = self._planner.build(user_input, history, memory_context)
 
         final_text, used_tools = self._run_loop(request_id, messages)
 
@@ -153,11 +189,27 @@ class Agent:
                 request_id, PipelineStage.OBSERVING, EventStatus.SKIPPED, "Checking the result"
             )
 
-        # No MemoryService yet (M5) -> Agent itself is a valid emitter for this stage
-        # (docs/03 §7.1, docs/06 §1) and there's never anything to actually store.
-        self._emit(
-            request_id, PipelineStage.REMEMBERING, EventStatus.SKIPPED, "Nothing new to remember"
-        )
+        # M5: real semantics — reflects whether memory_tool actually stored something this
+        # turn, not an unconditional skip. Still Agent's own stage: it's the one component
+        # that knows a tool call happened, before MemoryService's persist_turn (below) even
+        # runs (that's an unrelated, silent, automatic archival — docs/09 §1).
+        if self._memory_written_this_turn:
+            self._emit(
+                request_id, PipelineStage.REMEMBERING, EventStatus.STARTED, "Saving that for later…"
+            )
+            self._emit(
+                request_id,
+                PipelineStage.REMEMBERING,
+                EventStatus.COMPLETED,
+                "Saved that for later!",
+            )
+        else:
+            self._emit(
+                request_id,
+                PipelineStage.REMEMBERING,
+                EventStatus.SKIPPED,
+                "Nothing new to remember",
+            )
 
         self._emit(
             request_id, PipelineStage.RESPONDING, EventStatus.STARTED, "Getting my answer ready"
@@ -175,6 +227,20 @@ class Agent:
 
         self._state.append(ChatMessage(role="user", content=user_input.text))
         self._state.append(ChatMessage(role="assistant", content=final_text))
+
+        if self._memory is not None:
+            stages = self._stage_recorder.pop(request_id) if self._stage_recorder else []
+            self._memory.persist_turn(
+                TurnRecord(
+                    request_id=request_id,
+                    ts=datetime.now(UTC),
+                    user_text=user_input.text,
+                    user_source=user_input.source,
+                    assistant_text=final_text,
+                    tools=tuple(self._tool_records_this_turn),
+                    stages=tuple(stages),
+                )
+            )
 
         return reply
 
@@ -282,6 +348,21 @@ class Agent:
                     role="tool", content=_result_envelope(result), tool_call_id=call.call_id
                 )
             )
+            self._tool_records_this_turn.append(
+                ToolCallRecord(
+                    name=call.tool_name,
+                    args=call.arguments,
+                    status=result.status,
+                    duration_ms=result.duration_ms,
+                )
+            )
+            if (
+                call.tool_name == _MEMORY_TOOL_NAME
+                and result.status == "ok"
+                and result.data is not None
+                and result.data.get("stored")
+            ):
+                self._memory_written_this_turn = True
         ok = sum(1 for result in results if result.status == "ok")
         self._emit(
             request_id,

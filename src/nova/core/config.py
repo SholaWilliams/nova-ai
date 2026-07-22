@@ -13,12 +13,13 @@ from __future__ import annotations
 import json
 import logging
 import os
-import tempfile
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from nova.core.atomic_io import atomic_write_text
 
 logger = logging.getLogger(__name__)
 
@@ -195,13 +196,10 @@ def write_secret_to_env(data_dir: Path, key: str, value: str) -> None:
     """Atomically upsert one `KEY=value` line in the data-dir `.env` file (docs/10 §4).
 
     Secrets never get written to `settings.json` (NFR-8) — this is their one persistence
-    path. `key` is the full env var name (e.g. `NOVA_GEMINI_API_KEY`). Mirrors
-    `save_settings`'s temp-file+`os.replace` durability; preserves any other lines already
-    in the file.
+    path. `key` is the full env var name (e.g. `NOVA_GEMINI_API_KEY`). Preserves any other
+    lines already in the file.
     """
-    data_dir.mkdir(parents=True, exist_ok=True)
     env_path = data_dir / ".env"
-
     lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.is_file() else []
 
     prefix = f"{key}="
@@ -213,34 +211,10 @@ def write_secret_to_env(data_dir: Path, key: str, value: str) -> None:
     else:
         lines.append(new_line)
 
-    payload = "\n".join(lines) + "\n"
-
-    fd, tmp_path_str = tempfile.mkstemp(dir=data_dir, prefix=".env.", suffix=".tmp")
-    tmp_path = Path(tmp_path_str)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_path, env_path)
-    except BaseException:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    atomic_write_text(env_path, "\n".join(lines) + "\n", tmp_prefix=".env.")
 
 
 def save_settings(settings: Settings, path: Path) -> None:
     """Write `settings.json` atomically: temp file in the same dir, then `os.replace`."""
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(settings.model_dump(mode="json"), indent=2)
-
-    fd, tmp_path_str = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    tmp_path = Path(tmp_path_str)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_path, path)
-    except BaseException:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    atomic_write_text(path, payload)
