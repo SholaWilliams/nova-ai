@@ -11,7 +11,7 @@ import pytest
 
 from nova.core.errors import SpeechError
 from nova.speech import audio as audio_module
-from nova.speech.audio import AudioCapture, AudioPlayback
+from nova.speech.audio import AudioCapture, AudioPlayback, list_output_devices
 
 
 class _FakeInputStream:
@@ -60,9 +60,22 @@ class _FakeOutputStream:
         self.closed = True
 
 
+_FAKE_HOSTAPIS = [{"name": "MME"}, {"name": "Windows WDM-KS"}]
+_FAKE_DEVICES = [
+    {"name": "Mic (MME)", "max_input_channels": 1, "max_output_channels": 0, "hostapi": 0},
+    {"name": "Speaker (MME)", "max_input_channels": 0, "max_output_channels": 2, "hostapi": 0},
+    {"name": "Headset (WDM-KS)", "max_input_channels": 1, "max_output_channels": 1, "hostapi": 1},
+    {"name": "Device 3 (MME)", "max_input_channels": 1, "max_output_channels": 2, "hostapi": 0},
+]
+
+
 @pytest.fixture(autouse=True)
-def _clear_fake_instances() -> None:
+def _clear_fake_instances(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeInputStream.instances.clear()
+    # deterministic device list — real `sd.query_devices()` would make `_resolve_device()`
+    # (called by every `start()`/`open()`) depend on whatever hardware runs the test
+    monkeypatch.setattr(audio_module.sd, "query_hostapis", lambda: _FAKE_HOSTAPIS)
+    monkeypatch.setattr(audio_module.sd, "query_devices", lambda: _FAKE_DEVICES)
 
 
 class TestAudioCapture:
@@ -86,6 +99,19 @@ class TestAudioCapture:
 
         with pytest.raises(SpeechError):
             capture.start(device=None)
+
+    def test_start_falls_back_to_default_for_a_stale_wdm_ks_device(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A device index persisted before WDM-KS exclusion existed (or one that got
+        unplugged) must degrade to the system default, not crash stream-open."""
+        monkeypatch.setattr(audio_module.sd, "InputStream", _FakeInputStream)
+        capture = AudioCapture()
+
+        capture.start(device=2)  # index 2 in _FAKE_DEVICES is the WDM-KS headset
+
+        stream = _FakeInputStream.instances[0]
+        assert stream.kwargs["device"] is None
 
     def test_callback_pushes_frame_bytes_onto_queue(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(audio_module.sd, "InputStream", _FakeInputStream)
@@ -136,6 +162,19 @@ class TestAudioPlayback:
 
         assert playback._stream.started is True  # type: ignore[union-attr]
 
+    def test_open_falls_back_to_default_for_a_stale_wdm_ks_device(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Reproduces the real bug: `output_device` persisted in settings.json pointed at a
+        WDM-KS entry, and PortAudio's blocking API can't open one — `PaErrorCode -9999`
+        'Blocking API not supported yet'. Must degrade to the default device, not crash."""
+        monkeypatch.setattr(audio_module.sd, "OutputStream", _FakeOutputStream)
+        playback = AudioPlayback()
+
+        playback.open(samplerate=24000, channels=1, device=2)  # index 2 = WDM-KS headset
+
+        assert playback._stream.kwargs["device"] is None  # type: ignore[union-attr]
+
     def test_write_forwards_to_the_stream(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(audio_module.sd, "OutputStream", _FakeOutputStream)
         playback = AudioPlayback()
@@ -160,3 +199,25 @@ class TestAudioPlayback:
         playback = AudioPlayback()
 
         playback.abort()  # must not raise
+
+
+def test_list_output_devices_excludes_wdm_ks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """WDM-KS devices (e.g. Bluetooth headsets) can't open a blocking OutputStream — see
+    audio.py's `_usable_devices` comment — so Settings must never offer them."""
+    monkeypatch.setattr(
+        audio_module.sd,
+        "query_hostapis",
+        lambda: [{"name": "MME"}, {"name": "Windows WDM-KS"}],
+    )
+    monkeypatch.setattr(
+        audio_module.sd,
+        "query_devices",
+        lambda: [
+            {"name": "Speakers (MME)", "max_output_channels": 2, "hostapi": 0},
+            {"name": "Headset (WDM-KS)", "max_output_channels": 1, "hostapi": 1},
+        ],
+    )
+
+    devices = list_output_devices()
+
+    assert [d.name for d in devices] == ["Speakers (MME)"]

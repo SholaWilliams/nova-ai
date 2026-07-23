@@ -53,7 +53,7 @@
 ## 5. Audio Cues & Device Management
 
 - **Cues** (`assets/sounds/`): listen-start (rising two-tone, 200 ms), listen-end (falling, 150 ms), error (soft thud). Cues ≤ -12 dBFS; disabled with reduced-motion? No — separate "sound effects" toggle.
-- **Devices (FR-12):** enumerate via `sounddevice.query_devices()`; Settings dropdowns for input/output; "mic test" level meter. Device loss mid-session ⇒ `SpeechError` → conversational fallback to typed mode (SC-6) + status mic icon struck through.
+- **Devices (FR-12):** enumerate via `sounddevice.query_devices()`, excluding the **Windows WDM-KS** host API ⚠️ confirmed by hands-on testing: WDM-KS doesn't support the blocking read/write this app uses and always fails stream-open with `PaErrorCode -9999` — Windows commonly exposes the same physical device (esp. Bluetooth headsets) redundantly under MME/DirectSound/WASAPI *and* WDM-KS, so filtering WDM-KS still leaves a working entry; Settings dropdowns for input/output; "mic test" level meter. Device loss mid-session ⇒ `SpeechError` → conversational fallback to typed mode (SC-6) + status mic icon struck through.
 
 ## 6. Error Matrix
 
