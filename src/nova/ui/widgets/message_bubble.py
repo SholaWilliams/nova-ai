@@ -104,6 +104,12 @@ class MessageBubble(QWidget):
         self._fade_animation = make_property_animation(
             self._opacity_effect, "opacity", *Motion.BASE, start_value=0.0, end_value=1.0
         )
+        # Drop the effect once the fade lands. A QGraphicsOpacityEffect on a widget freshly
+        # inserted into a resizable QScrollArea can stay stuck at its cached opacity-0 pixmap
+        # until the *next* relayout repaints it — the reported "reply doesn't show up until I
+        # send another message". Removing the effect at the end forces a normal repaint, so a
+        # completed (or janky) fade can never leave the bubble invisible.
+        self._fade_animation.finished.connect(lambda: self.setGraphicsEffect(None))
         QTimer.singleShot(0, self._fade_animation.start)
 
     def set_max_bubble_width(self, chat_pane_width: int) -> None:

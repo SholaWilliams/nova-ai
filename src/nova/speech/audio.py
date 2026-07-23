@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import queue
 
+import numpy as np
 import sounddevice as sd
 
 from nova.core.errors import SpeechError
@@ -105,7 +106,10 @@ class AudioPlayback:
         if self._stream is None:
             return
         try:
-            self._stream.write(pcm)  # type: ignore[arg-type]
+            # sd.OutputStream.write needs a numpy array matching its dtype ("int16") —
+            # passing raw bytes makes numpy build a 0-d dtype='S<len>' array instead of
+            # reinterpreting the buffer as samples, which raises a dtype mismatch.
+            self._stream.write(np.frombuffer(pcm, dtype="int16"))
         except sd.PortAudioError as exc:
             raise SpeechError(
                 str(exc), friendly_message="Speaker changed — check Settings"

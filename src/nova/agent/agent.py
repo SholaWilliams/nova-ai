@@ -66,6 +66,16 @@ def _result_envelope(result: ToolResult) -> str:
 _SAFETY_REFUSAL_TEXT = "I don't think I should talk about that — let's chat about something else!"
 _CANT_REACH_BRAIN_TEXT = "I can't reach my brain right now — is the internet on?"
 _TOO_COMPLICATED_TEXT = "That got too complicated for me — try asking a simpler way?"
+_GARBLED_RESPONSE_TEXT = "That came out garbled on my end — try asking again?"
+
+
+def _looks_degenerate(text: str | None) -> bool:
+    """A provider's own generation went bad (observed: OpenRouter free-tier <unk>-spam).
+
+    # ponytail: catches the observed <unk>-spam failure signature only; generalize to a
+    # repetition-ratio check if a different garble shape shows up in the wild.
+    """
+    return text is not None and text.count("<unk>") >= 3
 
 
 class AgentCancelled(Exception):  # noqa: N818 - deliberately not "*Error"; see docstring
@@ -265,6 +275,30 @@ class Agent:
                     {"error_code": "provider_unavailable"},
                 )
                 return _CANT_REACH_BRAIN_TEXT, used_tools
+
+            if _looks_degenerate(response.text):
+                try:
+                    response = self._provider_manager.generate(messages, schemas, self._opts)
+                except SafetyBlocked:
+                    return _SAFETY_REFUSAL_TEXT, used_tools
+                except ProviderError:
+                    self._emit(
+                        request_id,
+                        PipelineStage.ERROR,
+                        EventStatus.COMPLETED,
+                        _CANT_REACH_BRAIN_TEXT,
+                        {"error_code": "provider_unavailable"},
+                    )
+                    return _CANT_REACH_BRAIN_TEXT, used_tools
+                if _looks_degenerate(response.text):
+                    self._emit(
+                        request_id,
+                        PipelineStage.ERROR,
+                        EventStatus.COMPLETED,
+                        _GARBLED_RESPONSE_TEXT,
+                        {"error_code": "degenerate_response"},
+                    )
+                    return _GARBLED_RESPONSE_TEXT, used_tools
 
             if response.finish_reason == "safety" and not response.text:
                 return _SAFETY_REFUSAL_TEXT, used_tools

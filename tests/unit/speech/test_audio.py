@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import queue
 
+import numpy as np
 import pytest
 
 from nova.core.errors import SpeechError
@@ -142,7 +143,9 @@ class TestAudioPlayback:
 
         playback.write(b"\x00\x01")
 
-        assert playback._stream.written == [b"\x00\x01"]  # type: ignore[union-attr]
+        written = playback._stream.written  # type: ignore[union-attr]
+        assert len(written) == 1
+        np.testing.assert_array_equal(written[0], np.frombuffer(b"\x00\x01", dtype="int16"))
 
     def test_abort_is_callable_without_a_prior_stop(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(audio_module.sd, "OutputStream", _FakeOutputStream)

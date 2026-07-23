@@ -40,9 +40,37 @@ class LLMProvider(ABC):
 - Also hosts STT (TD-5): the *speech* layer holds its own thin Groq client — no dependency from `speech/` to `providers/` (D-2); they share only the API key via config.
 - Groq's API surface has no hard-block concept equivalent to Gemini's `prompt_feedback.block_reason` — this adapter never raises `SafetyBlocked`.
 
-### 2.3 Normalization Table
+### 2.3 OpenRouter (`openrouter.py`)
+- Plain `httpx` (TD-11: owned HTTP calls), not a vendor SDK — OpenRouter is a meta-provider
+  exposing many models behind one key over an OpenAI-Chat-Completions-compatible REST endpoint.
+  Request/response mapping reuses `_openai_compat.py`, the same dialect Groq speaks.
+- Default model **`nvidia/nemotron-3-super-120b-a12b:free`** (verified 2026-07-22, M8 — see
+  Phase 4 TD-4): a plain chat model, no reasoning leak like Groq's `gpt-oss-120b`. Settings
+  exposes an editable model field (not a fixed catalog — any OpenRouter model id can be typed
+  in); changing it rebuilds the live `OpenRouterProvider` instance via
+  `ProviderManager.set_provider()`.
+- No hard-safety-block concept in OpenRouter's API surface (like Groq, unlike Gemini) — this
+  adapter never raises `SafetyBlocked`.
+- **Free-tier reliability mitigation (2026-07-23):** `:free`-tier requests load-balance across
+  backend hosts of varying quantization quality; a low-precision backend is the observed source
+  of degenerate output (`<unk>`-token spam / repetition collapse). Two independent mitigations:
+  - *Request-side:* every request sends `provider.quantizations` excluding the lowest-precision
+    tiers (`int4`, `fp4`, `fp6`, `unknown`) — a soft steer, not a hard gate (`allow_fallbacks`
+    is left at OpenRouter's default so a quiet outage of higher-precision backends doesn't take
+    the free tier down entirely). ⚠️ verify-at-implementation: OpenRouter's quantization
+    vocabulary is a perishable fact — re-check the exact tier list against OpenRouter's current
+    docs if routing behavior changes.
+  - *Response-side (`agent.py`, provider-agnostic):* `_looks_degenerate()` checks for the
+    observed `<unk>`-spam signature; if the first response looks degenerate, the agent retries
+    the `generate()` call once before falling back to a friendly "that came out garbled" message
+    rather than showing raw garbage. Deliberately not folded into
+    `ProviderManager._attempt_with_retry` (§3.2), which is keyed to exception types
+    (`Transient`/`RateLimited`), not response content — a 200-OK-but-garbled response is a
+    different failure shape than a network/rate-limit failure.
 
-| Internal | Gemini | Groq (OpenAI-style) |
+### 2.4 Normalization Table
+
+| Internal | Gemini | Groq / OpenRouter (OpenAI-style) |
 |---|---|---|
 | system prompt | `system_instruction` | `messages[role=system]` |
 | assistant tool call | `functionCall` part | `tool_calls[]` |
@@ -93,7 +121,9 @@ generate(request):
 3. Constructed in `app.py` and passed into `ProviderManager`'s constructor (D-6: composition lives in `app.py`, never inside `manager.py` itself) + settings enum + `.env.example` key line.
 4. No agent, tool, or UI changes — if any are needed, the abstraction failed; fix the abstraction.
 
-**Future providers (design-verified against the interface):** OpenAI (`gpt-4o-mini`) and Anthropic (`claude-haiku`) — both OpenAI/Groq-shaped or trivially mappable; Mistral; OpenRouter (meta-provider giving many models behind one key — attractive for classrooms, evaluate post-1.0).
+**Future providers (design-verified against the interface):** OpenAI (`gpt-4o-mini`) and Anthropic (`claude-haiku`) — both OpenAI/Groq-shaped or trivially mappable; Mistral.
+
+OpenRouter (§2.3) shipped at M8 as the third provider — no longer "future."
 
 ---
 
@@ -103,5 +133,6 @@ generate(request):
 |---------|------|--------|
 | 1.0.0 | 2026-07-08 | Initial version for Phase 10 review. |
 | 1.1.0 | 2026-07-09 | M2: default models resolved (`gemini-3.5-flash`, `openai/gpt-oss-120b`; Phase 4 TD-4); §2 clarifies the hard-block/soft-filter safety split and that Groq never raises `SafetyBlocked`; §4/§5 updated to match the actual constructor-injection pattern (`app.py` builds providers and passes them into `ProviderManager`, no static `PROVIDERS` dict) and the lighter network-free startup check M2 actually implements. |
+| 1.2.0 | 2026-07-23 | M8: §2.3 OpenRouter section added (was previously undocumented despite the code citing it); §5 moves OpenRouter from "future" to shipped; documents the free-tier quantization-routing pin and the provider-agnostic degenerate-output retry in `agent.py`. |
 
 **Exit check:** agent is 100 % dialect-free; every provider failure mode maps to a defined behavior; fallback is observable in the UI; adding provider #3 touches two files + config.

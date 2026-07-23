@@ -249,6 +249,13 @@ def build_stylesheet(accent: str = DEFAULT_ACCENT) -> str:
             color: {Color.TEXT_SECONDARY};
         }}
 
+        /* Without this, the global `QWidget` background above paints an opaque BG_BASE
+           rectangle behind every checkbox/radio, showing as a dark full-width bar over the
+           lighter #surface cards. Keep them transparent so only the indicator + label show. */
+        QCheckBox, QRadioButton {{
+            background: transparent;
+        }}
+
         QScrollBar:vertical {{
             background: transparent;
             width: 10px;
