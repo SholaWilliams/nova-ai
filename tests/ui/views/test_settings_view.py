@@ -16,54 +16,27 @@ def view(qtbot: object) -> SettingsView:
     return widget
 
 
-# ── provider radios ───────────────────────────────────────────────────
+# ── key row (M9: single OmniRoute provider, no picker) ─────────────────
 
 
-def test_gemini_radio_checked_by_default(view: SettingsView) -> None:
-    checked = [b.text() for b in view._radio_group.buttons() if b.isChecked()]
-    assert checked == ["Gemini"]
-
-
-def test_groq_radio_checked_when_settings_says_so(qtbot: object) -> None:
-    settings = Settings()
-    settings.provider.active = "groq"
-    widget = SettingsView(settings)
-    qtbot.addWidget(widget)  # type: ignore[attr-defined]
-
-    checked = [b.text() for b in widget._radio_group.buttons() if b.isChecked()]
-    assert checked == ["Groq"]
-
-
-def test_selecting_a_radio_emits_provider_selected(view: SettingsView, qtbot: object) -> None:
-    groq_radio = next(b for b in view._radio_group.buttons() if b.text() == "Groq")
-
-    with qtbot.waitSignal(view.provider_selected, timeout=1000) as blocker:  # type: ignore[attr-defined]
-        groq_radio.click()
-
-    assert blocker.args == ["groq"]
-
-
-# ── key rows ──────────────────────────────────────────────────────────
-
-
-def test_each_provider_gets_a_key_row(view: SettingsView) -> None:
-    assert set(view._key_rows) == {"gemini", "groq", "openrouter"}
+def test_omniroute_gets_a_key_row(view: SettingsView) -> None:
+    assert set(view._key_rows) == {"omniroute"}
 
 
 def test_key_entry_defaults_to_password_echo_mode(view: SettingsView) -> None:
-    row = view._key_rows["gemini"]
+    row = view._key_rows["omniroute"]
     assert row.entry.echoMode() == QLineEdit.EchoMode.Password
 
 
 def test_toggle_button_reveals_key_text(view: SettingsView) -> None:
-    row = view._key_rows["gemini"]
+    row = view._key_rows["omniroute"]
     row._toggle_button.click()
     assert row.entry.echoMode() == QLineEdit.EchoMode.Normal
     assert row._toggle_button.text() == "Hide"
 
 
 def test_toggle_button_hides_again_on_second_click(view: SettingsView) -> None:
-    row = view._key_rows["gemini"]
+    row = view._key_rows["omniroute"]
     row._toggle_button.click()
     row._toggle_button.click()
     assert row.entry.echoMode() == QLineEdit.EchoMode.Password
@@ -73,25 +46,25 @@ def test_toggle_button_hides_again_on_second_click(view: SettingsView) -> None:
 def test_editing_finished_emits_key_changed_and_clears_entry(
     view: SettingsView, qtbot: object
 ) -> None:
-    row = view._key_rows["groq"]
-    row.entry.setText("gsk_new_key")
+    row = view._key_rows["omniroute"]
+    row.entry.setText("or_new_key")
 
     with qtbot.waitSignal(view.key_changed, timeout=1000) as blocker:  # type: ignore[attr-defined]
         row._on_editing_finished()
 
-    assert blocker.args == ["groq", "gsk_new_key"]
+    assert blocker.args == ["omniroute", "or_new_key"]
     assert row.entry.text() == ""
 
 
 def test_editing_finished_masks_placeholder_after_handoff(view: SettingsView) -> None:
-    row = view._key_rows["groq"]
-    row.entry.setText("gsk_new_key")
+    row = view._key_rows["omniroute"]
+    row.entry.setText("or_new_key")
     row._on_editing_finished()
     assert "already set" in row.entry.placeholderText()
 
 
 def test_editing_finished_with_blank_text_does_not_emit(view: SettingsView) -> None:
-    row = view._key_rows["gemini"]
+    row = view._key_rows["omniroute"]
     row.entry.setText("   ")
     received: list[tuple[str, str]] = []
     view.key_changed.connect(lambda name, value: received.append((name, value)))
@@ -102,47 +75,47 @@ def test_editing_finished_with_blank_text_does_not_emit(view: SettingsView) -> N
 
 
 def test_test_button_emits_test_requested(view: SettingsView, qtbot: object) -> None:
-    row = view._key_rows["gemini"]
+    row = view._key_rows["omniroute"]
     with qtbot.waitSignal(view.test_requested, timeout=1000) as blocker:  # type: ignore[attr-defined]
         row._test_button.click()
-    assert blocker.args == ["gemini"]
+    assert blocker.args == ["omniroute"]
 
 
 def test_set_testing_disables_button_and_changes_text(view: SettingsView) -> None:
-    view.set_testing("gemini", True)
-    row = view._key_rows["gemini"]
+    view.set_testing("omniroute", True)
+    row = view._key_rows["omniroute"]
     assert row._test_button.isEnabled() is False
     assert row._test_button.text() == "Testing…"
 
-    view.set_testing("gemini", False)
+    view.set_testing("omniroute", False)
     assert row._test_button.isEnabled() is True
     assert row._test_button.text() == "Test"
 
 
 def test_set_key_test_result_success_shows_checkmark(view: SettingsView) -> None:
-    view.set_key_test_result("gemini", True, "Looks good")
-    row = view._key_rows["gemini"]
+    view.set_key_test_result("omniroute", True, "Looks good")
+    row = view._key_rows["omniroute"]
     assert not row._feedback_label.isHidden()
     assert "Looks good" in row._feedback_label.text()
     assert "✓" in row._feedback_label.text()
 
 
 def test_set_key_test_result_failure_shows_warning(view: SettingsView) -> None:
-    view.set_key_test_result("gemini", False, "Invalid key")
-    row = view._key_rows["gemini"]
+    view.set_key_test_result("omniroute", False, "Invalid key")
+    row = view._key_rows["omniroute"]
     assert "Invalid key" in row._feedback_label.text()
     assert "⚠" in row._feedback_label.text()
 
 
 def test_set_key_configured_true_shows_already_set_placeholder(view: SettingsView) -> None:
-    view.set_key_configured("groq", True)
-    assert "already set" in view._key_rows["groq"].entry.placeholderText()
+    view.set_key_configured("omniroute", True)
+    assert "already set" in view._key_rows["omniroute"].entry.placeholderText()
 
 
 def test_set_key_configured_false_restores_default_placeholder(view: SettingsView) -> None:
-    row = view._key_rows["groq"]
-    view.set_key_configured("groq", True)
-    view.set_key_configured("groq", False)
+    row = view._key_rows["omniroute"]
+    view.set_key_configured("omniroute", True)
+    view.set_key_configured("omniroute", False)
     assert row.entry.placeholderText() == "Paste your API key…"
 
 
@@ -154,9 +127,9 @@ def test_missing_key_banner_hidden_by_default(view: SettingsView) -> None:
 
 
 def test_show_missing_key_banner_displays_message(view: SettingsView) -> None:
-    view.show_missing_key_banner("Add a Gemini key to get started")
+    view.show_missing_key_banner("Add an OmniRoute key to get started")
     assert not view._banner.isHidden()
-    assert view._banner.text() == "Add a Gemini key to get started"
+    assert view._banner.text() == "Add an OmniRoute key to get started"
 
 
 def test_hide_missing_key_banner(view: SettingsView) -> None:
@@ -165,11 +138,11 @@ def test_hide_missing_key_banner(view: SettingsView) -> None:
     assert not view._banner.isVisible()
 
 
-def test_focus_first_key_field_focuses_the_gemini_entry(
+def test_focus_first_key_field_focuses_the_omniroute_entry(
     view: SettingsView, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[bool] = []
-    monkeypatch.setattr(view._key_rows["gemini"].entry, "setFocus", lambda: calls.append(True))
+    monkeypatch.setattr(view._key_rows["omniroute"].entry, "setFocus", lambda: calls.append(True))
 
     view.focus_first_key_field()
 
@@ -201,16 +174,16 @@ def test_changing_voice_combo_emits_voice_changed(view: SettingsView, qtbot: obj
     assert blocker.args == ["alba"]
 
 
-def test_openrouter_model_combo_defaults_to_settings_value(view: SettingsView) -> None:
-    assert view._openrouter_model_combo.currentText() == "nvidia/nemotron-3-super-120b-a12b:free"
+def test_omniroute_model_combo_defaults_to_settings_value(view: SettingsView) -> None:
+    assert view._omniroute_model_combo.currentText() == "auto/coding"
 
 
-def test_committing_openrouter_model_combo_emits_openrouter_model_changed(
+def test_committing_omniroute_model_combo_emits_omniroute_model_changed(
     view: SettingsView, qtbot: object
 ) -> None:
-    combo = view._openrouter_model_combo
+    combo = view._omniroute_model_combo
     combo.lineEdit().selectAll()
-    with qtbot.waitSignal(view.openrouter_model_changed, timeout=1000) as blocker:  # type: ignore[attr-defined]
+    with qtbot.waitSignal(view.omniroute_model_changed, timeout=1000) as blocker:  # type: ignore[attr-defined]
         qtbot.keyClicks(combo.lineEdit(), "some/other-model")  # type: ignore[attr-defined]
         qtbot.keyClick(combo.lineEdit(), Qt.Key.Key_Return)  # type: ignore[attr-defined]
 

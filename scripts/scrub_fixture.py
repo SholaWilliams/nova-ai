@@ -25,7 +25,7 @@ _PLACEHOLDER = "***SCRUBBED***"  # noqa: S105 - a placeholder marker, not a cred
 
 
 def scrub_text(text: str, secrets: Secrets) -> str:
-    for real_value in (secrets.gemini_api_key, secrets.groq_api_key):
+    for real_value in (secrets.omniroute_api_key, secrets.groq_api_key):
         if real_value:
             text = text.replace(real_value, _PLACEHOLDER)
     for pattern in _KEY_PATTERNS:

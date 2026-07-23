@@ -1,10 +1,12 @@
-"""OpenRouterProvider: the `openrouter.ai` adapter (docs/10 §2.4).
+"""OmniRouteProvider: the OmniRoute local-gateway adapter (docs/10 §2.1, M9).
 
-OpenRouter is a meta-provider exposing many models behind one key, via an OpenAI-Chat-
-Completions-compatible REST endpoint — so this adapter is plain `httpx`, not a vendor SDK
-(docs/04 TD-4 amendment: no new dependency, `httpx` already covers "plain HTTP calls we own",
-TD-11). Request shape reuses `_openai_compat` (same dialect Groq speaks); response parsing is
-its own thing here since it's a raw JSON dict, not SDK response objects.
+OmniRoute (github.com/diegosouzapw/OmniRoute) is a locally-run AI gateway the owner runs
+separately, exposing many upstream providers behind one OpenAI-Chat-Completions-compatible
+REST endpoint — so this adapter is plain `httpx`, not a vendor SDK, same reasoning
+`OpenRouterProvider` used (docs/04 TD-4). Request shape reuses `_openai_compat` (the same
+dialect Groq/OpenRouter speak); response parsing is its own thing here since it's a raw JSON
+dict, not SDK response objects — copied near-verbatim from `openrouter.py`, the closest
+existing pattern.
 
 Adapters raise only `core.errors.ProviderError` subtypes — the manager and agent never see a
 raw SDK/HTTP exception (A-4, A-6, docs/10 §1).
@@ -29,8 +31,6 @@ from nova.providers.base import (
     TokenUsage,
 )
 
-_BASE_URL = "https://openrouter.ai/api/v1"
-
 _FINISH_REASON_MAP: dict[str, Literal["stop", "tool_calls", "length", "error"]] = {
     "stop": "stop",
     "tool_calls": "tool_calls",
@@ -38,18 +38,19 @@ _FINISH_REASON_MAP: dict[str, Literal["stop", "tool_calls", "length", "error"]] 
 }
 
 
-class OpenRouterProvider(LLMProvider):
-    """Cloud LLM backend for OpenRouter, normalized to `LLMProvider` (docs/10 §2.4).
+class OmniRouteProvider(LLMProvider):
+    """Local LLM gateway backend for OmniRoute, normalized to `LLMProvider` (docs/10 §2.1).
+    Sole LLM backend as of M9 — no cloud fallback (owner decision).
 
-    OpenRouter has no dedicated hard-safety-block concept in its API surface (like Groq,
-    unlike Gemini) — `SafetyBlocked` is never raised by this adapter.
+    OmniRoute has no documented hard-safety-block concept in its API surface (like
+    OpenRouter/Groq, unlike Gemini) — `SafetyBlocked` is never raised by this adapter.
     """
 
-    def __init__(self, api_key: str, model: str) -> None:
-        self.name = "openrouter"
+    def __init__(self, base_url: str, api_key: str, model: str) -> None:
+        self.name = "omniroute"
         self._model = model
         self._client = httpx.Client(
-            base_url=_BASE_URL, headers={"Authorization": f"Bearer {api_key}"}
+            base_url=f"{base_url}/v1", headers={"Authorization": f"Bearer {api_key}"}
         )
 
     def generate(
@@ -63,16 +64,6 @@ class OpenRouterProvider(LLMProvider):
             "messages": [to_openai_message(message) for message in messages],
             "temperature": opts.temperature,
             "max_tokens": opts.max_tokens,
-            # ⚠️ verify-at-implementation (2026-07-23, docs/10 §2.4): excludes the lowest-
-            # precision quantization tiers, which free-tier backend routing most often lands
-            # degenerate/garbled output on (observed: <unk>-spam). Re-check this tier list
-            # against OpenRouter's current docs if routing behavior changes.
-            "provider": {"quantizations": ["int8", "fp8", "fp16", "bf16", "fp32"]},
-            # ponytail: if a chosen model reasons and leaks chain-of-thought like Groq's
-            # gpt-oss-120b did (docs/10 TD-4), OpenRouter's own `reasoning: {"exclude": true}`
-            # is the knob — add it here if/when a documented default model needs it. Nemotron
-            # 3 Super (the current default, docs/04 TD-4) is a plain chat model; skipped until
-            # a real model needs it (YAGNI).
         }
         if tools:
             payload["tools"] = [to_openai_tool(tool) for tool in tools]
@@ -81,11 +72,11 @@ class OpenRouterProvider(LLMProvider):
             response = self._client.post("/chat/completions", json=payload, timeout=opts.timeout_s)
             response.raise_for_status()
         except httpx.TimeoutException as exc:
-            raise Transient(f"openrouter request timed out: {exc}") from exc
+            raise Transient(f"omniroute request timed out: {exc}") from exc
         except httpx.HTTPStatusError as exc:
             raise _map_status_error(exc) from exc
         except httpx.HTTPError as exc:
-            raise Transient(f"openrouter request failed: {exc}") from exc
+            raise Transient(f"omniroute request failed: {exc}") from exc
 
         return _to_llm_response(response.json())
 
@@ -103,18 +94,17 @@ class OpenRouterProvider(LLMProvider):
 
     @property
     def capabilities(self) -> ProviderCaps:
-        # docs/10 §2.4: varies per model in principle, but every OpenRouter model NOVA
-        # documents as a supported default (Nemotron 3 Super) supports tool calling with a
-        # comparable context window to the other two providers.
+        # docs/10 §2.1: varies per model in principle (OmniRoute routes across 278+
+        # providers) — assumed tool-calling-capable since the pinned default model is
+        # chosen for that reason (docs/04 TD-4); revisit if a non-tool-calling model is
+        # ever configured.
         return ProviderCaps(tool_calling=True, max_context=131_072, safety_settings=False)
 
 
 def _map_status_error(exc: httpx.HTTPStatusError) -> Exception:
     status = exc.response.status_code
     if status in (401, 403):
-        return AuthError(
-            str(exc), friendly_message="My connection to OpenRouter needs a fresh key."
-        )
+        return AuthError(str(exc), friendly_message="My connection to OmniRoute needs a fresh key.")
     if status == 429:
         return RateLimited(str(exc), retry_after=_extract_retry_after(exc.response))
     return Transient(str(exc))

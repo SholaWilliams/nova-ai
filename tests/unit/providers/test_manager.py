@@ -1,4 +1,10 @@
-"""Tests for ProviderManager's selection/retry/fallback/cooldown state machine (docs/10 §3)."""
+"""Tests for ProviderManager's single-provider retry + status reporting (docs/10 §3, M9).
+
+M2-M8's primary/fallback/cooldown state machine across multiple providers is gone — with
+OmniRoute as the sole backend there's nothing left to fall back to. What remains: retry-once
+on a transient failure, no retry on auth errors, `SafetyBlocked` never retries, and status
+reporting for the UI.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +12,7 @@ import time
 
 import pytest
 
-from nova.core.errors import AuthError, RateLimited, SafetyBlocked, Transient
+from nova.core.errors import AuthError, ProviderError, RateLimited, SafetyBlocked, Transient
 from nova.core.models import ChatMessage, ProviderStatus
 from nova.providers.base import GenerateOptions, LLMResponse, TokenUsage
 from nova.providers.fake import FakeProvider
@@ -20,102 +26,54 @@ def _reply(text: str) -> LLMResponse:
     return LLMResponse(text=text, tool_calls=(), finish_reason="stop", usage=TokenUsage(10, 5))
 
 
-def test_happy_path_uses_primary_and_reports_normal_status() -> None:
-    gemini = FakeProvider("gemini", [_reply("hello")])
-    manager = ProviderManager({"gemini": gemini}, active="gemini")
+def test_happy_path_reports_normal_status() -> None:
+    omniroute = FakeProvider("omniroute", [_reply("hello")])
+    manager = ProviderManager(omniroute)
     statuses: list[ProviderStatus] = []
     manager.status_changed.connect(statuses.append)
 
     result = manager.generate(_MESSAGES, [], _OPTS)
 
     assert result.text == "hello"
-    assert statuses[-1] == ProviderStatus(active="gemini", mode="normal", detail="Gemini")
+    assert statuses[-1] == ProviderStatus(active="omniroute", mode="normal", detail="OmniRoute")
 
 
-def test_transient_error_retries_once_same_provider_then_succeeds() -> None:
-    gemini = FakeProvider("gemini", [Transient("blip"), _reply("recovered")])
-    manager = ProviderManager({"gemini": gemini}, active="gemini")
+def test_transient_error_retries_once_then_succeeds() -> None:
+    omniroute = FakeProvider("omniroute", [Transient("blip"), _reply("recovered")])
+    manager = ProviderManager(omniroute)
 
     result = manager.generate(_MESSAGES, [], _OPTS)
 
     assert result.text == "recovered"
-    assert len(gemini.calls) == 2
+    assert len(omniroute.calls) == 2
 
 
 def test_rate_limited_honors_retry_after(monkeypatch: pytest.MonkeyPatch) -> None:
     sleeps: list[float] = []
     monkeypatch.setattr(time, "sleep", sleeps.append)
-    gemini = FakeProvider("gemini", [RateLimited("slow down", retry_after=5.0), _reply("ok")])
-    manager = ProviderManager({"gemini": gemini}, active="gemini")
+    omniroute = FakeProvider("omniroute", [RateLimited("slow down", retry_after=5.0), _reply("ok")])
+    manager = ProviderManager(omniroute)
 
     manager.generate(_MESSAGES, [], _OPTS)
 
     assert sleeps == [5.0]
 
 
-def test_auth_error_skips_retry_and_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_auth_error_skips_retry_and_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(time, "sleep", lambda _s: None)
-    gemini = FakeProvider("gemini", [AuthError("bad key")])
-    groq = FakeProvider("groq", [_reply("from groq")])
-    manager = ProviderManager({"gemini": gemini, "groq": groq}, active="gemini")
+    omniroute = FakeProvider("omniroute", [AuthError("bad key")])
+    manager = ProviderManager(omniroute)
 
-    result = manager.generate(_MESSAGES, [], _OPTS)
+    with pytest.raises(AuthError):
+        manager.generate(_MESSAGES, [], _OPTS)
 
-    assert result.text == "from groq"
-    assert len(gemini.calls) == 1  # no retry attempted
+    assert len(omniroute.calls) == 1  # no retry attempted
 
 
-def test_primary_failure_falls_back_and_reports_fallback_status(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_retry_also_failing_raises_and_reports_down(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(time, "sleep", lambda _s: None)
-    gemini = FakeProvider("gemini", [Transient("down"), Transient("still down")])
-    groq = FakeProvider("groq", [_reply("from groq")])
-    manager = ProviderManager({"gemini": gemini, "groq": groq}, active="gemini")
-    statuses: list[ProviderStatus] = []
-    manager.status_changed.connect(statuses.append)
-
-    result = manager.generate(_MESSAGES, [], _OPTS)
-
-    assert result.text == "from groq"
-    assert statuses[-1] == ProviderStatus(active="groq", mode="fallback", detail="Groq (fallback)")
-
-
-def test_primary_cooling_skips_straight_to_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(time, "sleep", lambda _s: None)
-    gemini = FakeProvider(
-        "gemini", [Transient("down"), Transient("still down"), _reply("should not be reached")]
-    )
-    groq = FakeProvider("groq", [_reply("first fallback"), _reply("second fallback")])
-    manager = ProviderManager({"gemini": gemini, "groq": groq}, active="gemini")
-
-    manager.generate(_MESSAGES, [], _OPTS)  # primary fails -> cools -> fallback
-    manager.generate(_MESSAGES, [], _OPTS)  # primary still cooling -> straight to fallback
-
-    assert len(gemini.calls) == 2  # only the first request's attempt (+ its 1 retry)
-    assert len(groq.calls) == 2
-
-
-def test_primary_probed_again_after_cooldown_expires(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(time, "sleep", lambda _s: None)
-    fake_now = [1000.0]
-    monkeypatch.setattr(time, "monotonic", lambda: fake_now[0])
-    gemini = FakeProvider("gemini", [Transient("down"), Transient("still down"), _reply("back")])
-    groq = FakeProvider("groq", [_reply("fallback")])
-    manager = ProviderManager({"gemini": gemini, "groq": groq}, active="gemini")
-
-    manager.generate(_MESSAGES, [], _OPTS)  # primary fails, cools for 60s
-    fake_now[0] += 61.0
-    result = manager.generate(_MESSAGES, [], _OPTS)  # cooldown expired -> primary probed again
-
-    assert result.text == "back"
-
-
-def test_both_providers_failing_raises_and_reports_down(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(time, "sleep", lambda _s: None)
-    gemini = FakeProvider("gemini", [Transient("down"), Transient("still down")])
-    groq = FakeProvider("groq", [Transient("also down")])
-    manager = ProviderManager({"gemini": gemini, "groq": groq}, active="gemini")
+    omniroute = FakeProvider("omniroute", [Transient("down"), Transient("still down")])
+    manager = ProviderManager(omniroute)
     statuses: list[ProviderStatus] = []
     manager.status_changed.connect(statuses.append)
 
@@ -126,91 +84,60 @@ def test_both_providers_failing_raises_and_reports_down(monkeypatch: pytest.Monk
 
 
 def test_no_provider_configured_raises_with_friendly_message() -> None:
-    manager = ProviderManager({}, active="gemini")
+    manager = ProviderManager(None)
 
-    with pytest.raises(Exception, match="no provider configured"):
+    with pytest.raises(ProviderError, match="no provider configured"):
         manager.generate(_MESSAGES, [], _OPTS)
 
 
-def test_selected_primary_missing_key_uses_the_other_configured_provider() -> None:
-    groq = FakeProvider("groq", [_reply("only option")])
-    manager = ProviderManager({"groq": groq}, active="gemini")  # gemini selected, no key
-
-    result = manager.generate(_MESSAGES, [], _OPTS)
-
-    assert result.text == "only option"
-
-
-def test_safety_blocked_never_retries_never_cools_never_falls_back() -> None:
-    gemini = FakeProvider("gemini", [SafetyBlocked("nope")])
-    groq = FakeProvider("groq", [_reply("should not be called")])
-    manager = ProviderManager({"gemini": gemini, "groq": groq}, active="gemini")
+def test_safety_blocked_never_retries() -> None:
+    omniroute = FakeProvider("omniroute", [SafetyBlocked("nope")])
+    manager = ProviderManager(omniroute)
 
     with pytest.raises(SafetyBlocked):
         manager.generate(_MESSAGES, [], _OPTS)
 
-    assert len(gemini.calls) == 1
-    assert len(groq.calls) == 0
+    assert len(omniroute.calls) == 1
 
 
-def test_set_active_hot_swaps_the_primary() -> None:
-    gemini = FakeProvider("gemini", [_reply("gemini says hi")])
-    groq = FakeProvider("groq", [_reply("groq says hi")])
-    manager = ProviderManager({"gemini": gemini, "groq": groq}, active="gemini")
+def test_check_health_reports_no_key_configured_when_no_provider() -> None:
+    manager = ProviderManager(None)
 
-    manager.set_active("groq")
-    result = manager.generate(_MESSAGES, [], _OPTS)
-
-    assert result.text == "groq says hi"
-    assert manager.active_name == "groq"
-
-
-def test_check_health_reports_no_key_configured_for_unconfigured_provider() -> None:
-    manager = ProviderManager({}, active="gemini")
-
-    available, detail = manager.check_health("gemini")
+    available, detail = manager.check_health()
 
     assert available is False
     assert detail == "No key configured"
 
 
-def test_configured_names_reflects_the_providers_given_at_construction() -> None:
-    manager = ProviderManager(
-        {"gemini": FakeProvider("gemini", []), "groq": FakeProvider("groq", [])}, active="gemini"
-    )
-
-    assert manager.configured_names == frozenset({"gemini", "groq"})
-
-
-def test_configured_names_empty_when_no_providers_configured() -> None:
-    manager = ProviderManager({}, active="gemini")
-    assert manager.configured_names == frozenset()
+def test_configured_reflects_whether_a_provider_was_given() -> None:
+    assert ProviderManager(FakeProvider("omniroute", [])).configured is True
+    assert ProviderManager(None).configured is False
 
 
 def test_set_provider_registers_a_previously_unconfigured_provider() -> None:
-    manager = ProviderManager({}, active="gemini")
+    manager = ProviderManager(None)
 
-    manager.set_provider("gemini", FakeProvider("gemini", [_reply("hello")]))
+    manager.set_provider(FakeProvider("omniroute", [_reply("hello")]))
     result = manager.generate(_MESSAGES, [], _OPTS)
 
     assert result.text == "hello"
-    assert manager.configured_names == frozenset({"gemini"})
+    assert manager.configured is True
 
 
 def test_set_provider_replaces_an_existing_provider_instance() -> None:
-    old_gemini = FakeProvider("gemini", [_reply("should not be called")])
-    manager = ProviderManager({"gemini": old_gemini}, active="gemini")
+    old = FakeProvider("omniroute", [_reply("should not be called")])
+    manager = ProviderManager(old)
 
-    manager.set_provider("gemini", FakeProvider("gemini", [_reply("rotated key")]))
+    manager.set_provider(FakeProvider("omniroute", [_reply("rotated key")]))
     result = manager.generate(_MESSAGES, [], _OPTS)
 
     assert result.text == "rotated key"
-    assert len(old_gemini.calls) == 0
+    assert len(old.calls) == 0
 
 
-def test_set_provider_does_not_change_which_provider_is_active() -> None:
-    manager = ProviderManager({"gemini": FakeProvider("gemini", [])}, active="gemini")
+def test_set_provider_none_clears_the_configured_provider() -> None:
+    manager = ProviderManager(FakeProvider("omniroute", []))
 
-    manager.set_provider("groq", FakeProvider("groq", []))
+    manager.set_provider(None)
 
-    assert manager.active_name == "gemini"
+    assert manager.configured is False

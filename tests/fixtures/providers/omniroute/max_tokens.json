@@ -2,21 +2,21 @@
   "id": "gen-123",
   "object": "chat.completion",
   "created": 1717000000,
-  "model": "nvidia/nemotron-3-super-120b-a12b:free",
+  "model": "auto/coding",
   "choices": [
     {
       "index": 0,
       "message": {
         "role": "assistant",
-        "content": "Hello! How can I help?",
+        "content": "The quick brown fox",
         "tool_calls": null
       },
-      "finish_reason": "stop"
+      "finish_reason": "length"
     }
   ],
   "usage": {
-    "prompt_tokens": 10,
-    "completion_tokens": 7,
-    "total_tokens": 17
+    "prompt_tokens": 8,
+    "completion_tokens": 10,
+    "total_tokens": 18
   }
 }

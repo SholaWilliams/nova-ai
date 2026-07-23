@@ -25,6 +25,7 @@ Assumes a solo developer, part-time (~10–12 h/week). One sprint = one week. Ef
 | **M6 — Ship** | S12–S13 | PyInstaller build runs on a clean Win 11 VM; docs synced; v1.0.0 tagged & released. Full manual test checklist green (SC-1…SC-10). |
 | **M7 — Education Track** | S14 | Phases 15–16 written; demo rehearsed against the shipped build (SC-11…SC-13). |
 | **M8 — Provider Resilience** | (post-M6, unplanned) | OpenRouter as a third LLM provider (consistency lever against Groq's reasoning-model leak); free-tier reliability (routing pin + degenerate-output retry) and a Settings model picker. docs/04 TD-4, docs/10 §2.3 amended. |
+| **M9 — Local-First Backends** | (post-M6, unplanned) | Two independent streams: TTS moved from in-process pocket-tts to `takada-tts-service` over HTTP (removes the PyTorch dependency + a dtype-crash bug class); LLM providers collapsed from Gemini/Groq/OpenRouter to OmniRoute, a single locally-run gateway (no cloud fallback, owner decision). docs/04 TD-4 + TD-6, docs/08 §4, docs/10, docs/11 §5 amended. |
 
 ## 2. Task Backlog
 
@@ -119,7 +120,17 @@ Assumes a solo developer, part-time (~10–12 h/week). One sprint = one week. Ef
 | T-803 | Free-tier reliability: `provider.quantizations` routing pin, degenerate-output detect+retry, Settings model picker | 4 | T-801, T-802 |
 | | **M8 subtotal** | **12** | |
 
-**Total: ~228 ideal hours ≈ 13–14 sprints at 10–12 h/week + M7 + M8 (unplanned, post-M6).** Matches the PRD §8 envelope (13–17 weeks).
+### M9 — Local-First Backends
+| ID | Task | Est (h) | Depends |
+|----|------|--------|---------|
+| T-901 | Stream A: `RemoteTTSEngine` (`remote_tts.py`) + `takada-tts-service` HTTP contract + tests | 4 | T-401 |
+| T-902 | Stream A: app.py/config.py wiring, delete `pocket_tts.py`, docs/04/08/11/14 sync | 2 | T-901 |
+| T-903 | Stream B: `OmniRouteProvider` (`omniroute.py`) + golden-fixture tests | 3 | T-801 |
+| T-904 | Stream B: `ProviderManager` single-provider simplification + tests | 3 | T-903 |
+| T-905 | Stream B: app.py/config.py/settings_view.py wiring, delete gemini/groq/openrouter adapters, docs/04/10/11 sync | 4 | T-903, T-904 |
+| | **M9 subtotal** | **16** | |
+
+**Total: ~228 ideal hours ≈ 13–14 sprints at 10–12 h/week + M7 + M8 + M9 (all unplanned, post-M6).** Matches the PRD §8 envelope (13–17 weeks).
 
 ## 3. Priority Matrix
 
@@ -159,5 +170,6 @@ Audio capture (T-401/402) is deliberately parallel-safe: it can be built during 
 |---------|------|--------|
 | 1.0.0 | 2026-07-08 | Initial version for Phase 12 review. |
 | 1.1.0 | 2026-07-23 | M8 added (post-M6, unplanned): OpenRouter provider + free-tier reliability work (T-801…T-803), closing the docs-sync debt left by the M8 code branch. |
+| 1.2.0 | 2026-07-23 | M9 added (post-M6, unplanned): two independent streams — TTS → `takada-tts-service` (T-901…T-902), LLM providers → OmniRoute (T-903…T-905). |
 
 **Exit check:** every FR maps into a task; effort totals fit the PRD envelope; slip order agreed; every task ≤ 8 h (splittable into one sitting).

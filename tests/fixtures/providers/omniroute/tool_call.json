@@ -1,8 +1,8 @@
 {
-  "id": "chatcmpl-123",
+  "id": "gen-123",
   "object": "chat.completion",
   "created": 1717000000,
-  "model": "openai/gpt-oss-120b",
+  "model": "auto/coding",
   "choices": [
     {
       "index": 0,
@@ -20,7 +20,6 @@
           }
         ]
       },
-      "logprobs": null,
       "finish_reason": "tool_calls"
     }
   ],

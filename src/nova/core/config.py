@@ -44,9 +44,9 @@ class Secrets(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="NOVA_", extra="ignore")
 
-    gemini_api_key: str | None = None
-    groq_api_key: str | None = None
-    openrouter_api_key: str | None = None
+    # M9: OmniRoute (a locally-run gateway, docs/04 TD-4) is the sole LLM backend.
+    omniroute_api_key: str | None = None
+    groq_api_key: str | None = None  # STT only (TD-5) — Groq's chat usage was removed at M9
     log_level: str = "INFO"
     desktop_override: str | None = None
 
@@ -65,23 +65,18 @@ class Secrets(BaseSettings):
 
 
 class ProviderSettings(BaseModel):
-    """Which LLM backend is active and which model each one uses."""
+    """OmniRoute connection config (M9, docs/04 TD-4) — sole LLM backend, no active-provider
+    selection needed anymore (there's only one)."""
 
     model_config = ConfigDict(extra="allow")
 
-    active: Literal["gemini", "groq", "openrouter"] = "gemini"
-    # ⚠️ verified at T-202/T-203 (2026-07-09): gemini-2.5-flash shuts down 2026-10-16
-    # (gemini-3.5-flash GA since 2026-05-19, no announced shutdown); llama-3.3-70b-versatile
-    # was deprecated for Groq's free/dev tier on 2026-06-17 (Groq's own recommended
-    # replacement: openai/gpt-oss-120b, matching the old model's tier and trained for
-    # agentic tool-calling — the reason Groq was chosen at all, TD-4). See docs/04 TD-4.
-    gemini_model: str = "gemini-3.5-flash"
-    groq_model: str = "openai/gpt-oss-120b"
-    # ⚠️ verified 2026-07-22 (M8): nvidia/nemotron-3-super-120b-a12b:free — free tier,
-    # confirmed tool-calling support, plain chat model (no reasoning leak like gpt-oss-120b).
-    # Added as a consistency lever for Groq's reasoning-model garble (docs/04 TD-4). User can
-    # point this at any OpenRouter model id in Settings.
-    openrouter_model: str = "nvidia/nemotron-3-super-120b-a12b:free"
+    omniroute_base_url: str = "http://127.0.0.1:20128"
+    # ⚠️ verify-at-implementation (M9): OmniRoute's public docs don't list a specific model id
+    # with confirmed tool-calling support (unlike OpenRouter's catalog, which did) — "auto/coding"
+    # (OmniRoute's own "quality-first" combo name) is the closest documented option, a
+    # placeholder pending owner verification against their own OmniRoute dashboard/model
+    # catalog once it's running. See docs/04 TD-4.
+    omniroute_model: str = "auto/coding"
 
 
 class VoiceSettings(BaseModel):

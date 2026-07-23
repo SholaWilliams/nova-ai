@@ -6,9 +6,8 @@ rule and docs/06 §8 both frame it this way. Shipped in `nova.providers` (same r
 under `tests/`, so `agent`'s own test suite can construct one without reaching across the
 `tests/`/`src/` boundary.
 
-Safety boundary: never add this to `manager.PROVIDERS` or to `ProviderSettings.active`'s
-`Literal["gemini", "groq", "openrouter"]` — that's what keeps it importable-but-never-
-user-selectable.
+Safety boundary: never wire this into `app.py`'s real provider construction — that's what
+keeps it importable-but-never-user-selectable.
 """
 
 from __future__ import annotations

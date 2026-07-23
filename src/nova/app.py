@@ -33,10 +33,8 @@ from nova.core.logging import EventLogBridge, register_secrets, setup_logging
 from nova.core.models import AssistantReply, ProviderStatus, Transcript
 from nova.memory.service import MemoryService
 from nova.providers.base import LLMProvider
-from nova.providers.gemini import GeminiProvider
-from nova.providers.groq import GroqProvider
 from nova.providers.manager import ProviderManager
-from nova.providers.openrouter import OpenRouterProvider
+from nova.providers.omniroute import OmniRouteProvider
 from nova.speech.audio import AudioCapture, list_input_devices, list_output_devices
 from nova.speech.service import SpeechService
 from nova.speech.stt.base import STTEngine
@@ -58,12 +56,7 @@ from nova.ui.animations import set_reduced_motion
 from nova.ui.main_window import MainWindow
 from nova.ui.theme import build_stylesheet
 
-_ENV_KEY_NAMES = {
-    "gemini": "NOVA_GEMINI_API_KEY",
-    "groq": "NOVA_GROQ_API_KEY",
-    "openrouter": "NOVA_OPENROUTER_API_KEY",
-}
-_PROVIDER_LABELS = {"gemini": "Gemini", "groq": "Groq", "openrouter": "OpenRouter"}
+_OMNIROUTE_ENV_KEY_NAME = "NOVA_OMNIROUTE_API_KEY"
 _NO_STT_KEY_MESSAGE = "I can't hear right now — you can type to me!"
 
 
@@ -83,26 +76,15 @@ class _NoKeySTTEngine(STTEngine):
         )
 
 
-def _build_provider(name: str, secrets: Secrets, settings: Settings) -> LLMProvider | None:
-    """Construct the adapter for `name` iff a key is configured — never a FakeProvider."""
-    if name == "gemini" and secrets.gemini_api_key:
-        return GeminiProvider(api_key=secrets.gemini_api_key, model=settings.provider.gemini_model)
-    if name == "groq" and secrets.groq_api_key:
-        return GroqProvider(api_key=secrets.groq_api_key, model=settings.provider.groq_model)
-    if name == "openrouter" and secrets.openrouter_api_key:
-        return OpenRouterProvider(
-            api_key=secrets.openrouter_api_key, model=settings.provider.openrouter_model
-        )
-    return None
-
-
-def _build_providers(secrets: Secrets, settings: Settings) -> dict[str, LLMProvider]:
-    providers: dict[str, LLMProvider] = {}
-    for name in ("gemini", "groq", "openrouter"):
-        provider = _build_provider(name, secrets, settings)
-        if provider is not None:
-            providers[name] = provider
-    return providers
+def _build_provider(secrets: Secrets, settings: Settings) -> LLMProvider | None:
+    """Construct the OmniRoute adapter iff a key is configured — never a FakeProvider."""
+    if not secrets.omniroute_api_key:
+        return None
+    return OmniRouteProvider(
+        base_url=settings.provider.omniroute_base_url,
+        api_key=secrets.omniroute_api_key,
+        model=settings.provider.omniroute_model,
+    )
 
 
 def _build_registry(secrets: Secrets, settings: Settings, data_dir: Path) -> ToolRegistry:
@@ -148,7 +130,7 @@ def _show_first_run_if_needed(window: MainWindow, secrets: Secrets) -> None:
     """
     # ponytail: simple check, not exhaustive. Keys may be set via env vars directly without
     # the settings UI knowing — but the common first-run path is empty → Settings → key entry.
-    if not secrets.gemini_api_key and not secrets.groq_api_key and not secrets.openrouter_api_key:
+    if not secrets.omniroute_api_key:
         window.settings_view.welcome_banner_visible = True
         window._stack.setCurrentIndex(1)  # _SETTINGS_PAGE (docs/05 §6.3, T-209)
 
@@ -160,7 +142,7 @@ def main() -> int:
     data_dir = get_data_dir()
     secrets = Secrets.load(data_dir=data_dir)
     setup_logging(data_dir, level=secrets.log_level)
-    register_secrets(secrets.gemini_api_key, secrets.groq_api_key, secrets.openrouter_api_key)
+    register_secrets(secrets.omniroute_api_key, secrets.groq_api_key)
 
     settings = load_settings(data_dir / "settings.json")
 
@@ -175,9 +157,7 @@ def main() -> int:
     # M6 T-603: first-run welcome — auto-show Settings if no keys configured yet.
     _show_first_run_if_needed(window, secrets)
 
-    provider_manager = ProviderManager(
-        _build_providers(secrets, settings), settings.provider.active
-    )
+    provider_manager = ProviderManager(_build_provider(secrets, settings))
     registry = _build_registry(secrets, settings, data_dir)
     memory_service = MemoryService(data_dir)  # M5: replaces the M3 InMemoryFacade stub
     tool_ctx = ToolContext(settings=settings, memory=memory_service)
@@ -294,52 +274,47 @@ def main() -> int:
 
     provider_manager.status_changed.connect(window.set_provider_status)
 
-    def _refresh_provider_status(name: str) -> None:
-        available, detail = provider_manager.check_health(name)
-        label = _PROVIDER_LABELS.get(name, name)
+    def _refresh_provider_status() -> None:
+        available, detail = provider_manager.check_health()
         if available:
-            window.set_provider_status(ProviderStatus(active=name, mode="normal", detail=label))
+            window.set_provider_status(
+                ProviderStatus(active="omniroute", mode="normal", detail="OmniRoute")
+            )
         else:
             window.set_provider_status(
-                ProviderStatus(active=name, mode="down", detail=f"{label}: {detail}")
+                ProviderStatus(active="omniroute", mode="down", detail=f"OmniRoute: {detail}")
             )
 
-    def _on_provider_selected(name: str) -> None:
-        settings.provider.active = name
-        save_settings(settings, data_dir / "settings.json")
-        provider_manager.set_active(name)
-        _refresh_provider_status(name)
-
     def _on_key_changed(name: str, value: str) -> None:
+        del name  # single provider now — the row is always "omniroute"
         nonlocal secrets
-        write_secret_to_env(data_dir, _ENV_KEY_NAMES[name], value)
+        write_secret_to_env(data_dir, _OMNIROUTE_ENV_KEY_NAME, value)
         secrets = Secrets.load(data_dir=data_dir)
-        register_secrets(secrets.gemini_api_key, secrets.groq_api_key, secrets.openrouter_api_key)
+        register_secrets(secrets.omniroute_api_key, secrets.groq_api_key)
 
-        provider = _build_provider(name, secrets, settings)
-        window.settings_view.set_key_configured(name, provider is not None)
+        provider = _build_provider(secrets, settings)
+        window.settings_view.set_key_configured("omniroute", provider is not None)
         if provider is not None:
-            provider_manager.set_provider(name, provider)
-            if name == provider_manager.active_name:
-                _refresh_provider_status(name)
+            provider_manager.set_provider(provider)
+            _refresh_provider_status()
 
     def _on_test_requested(name: str) -> None:
-        window.settings_view.set_testing(name, True)
-        available, detail = provider_manager.check_health(name)
-        window.settings_view.set_key_test_result(name, available, detail)
-        window.settings_view.set_testing(name, False)
+        del name
+        window.settings_view.set_testing("omniroute", True)
+        available, detail = provider_manager.check_health()
+        window.settings_view.set_key_test_result("omniroute", available, detail)
+        window.settings_view.set_testing("omniroute", False)
 
-    def _on_openrouter_model_changed(model: str) -> None:
-        settings.provider.openrouter_model = model
+    def _on_omniroute_model_changed(model: str) -> None:
+        settings.provider.omniroute_model = model
         save_settings(settings, data_dir / "settings.json")
-        provider = _build_provider("openrouter", secrets, settings)
+        provider = _build_provider(secrets, settings)
         if provider is not None:
-            provider_manager.set_provider("openrouter", provider)
+            provider_manager.set_provider(provider)
 
-    window.settings_view.provider_selected.connect(_on_provider_selected)
     window.settings_view.key_changed.connect(_on_key_changed)
     window.settings_view.test_requested.connect(_on_test_requested)
-    window.settings_view.openrouter_model_changed.connect(_on_openrouter_model_changed)
+    window.settings_view.omniroute_model_changed.connect(_on_omniroute_model_changed)
 
     # `settings.voice` is the exact object `speech_service` was built with (same reference,
     # not a copy) — mutating it in place here is all `SpeechService` needs to pick the
@@ -386,11 +361,10 @@ def main() -> int:
     window.settings_view.accent_changed.connect(_on_accent_changed)
     window.settings_view.reduced_motion_changed.connect(_on_reduced_motion_changed)
 
-    for name in ("gemini", "groq", "openrouter"):
-        window.settings_view.set_key_configured(name, name in provider_manager.configured_names)
+    window.settings_view.set_key_configured("omniroute", provider_manager.configured)
 
-    if provider_manager.configured_names:
-        _refresh_provider_status(settings.provider.active)
+    if provider_manager.configured:
+        _refresh_provider_status()
     else:
         window.settings_view.show_missing_key_banner(
             "No API key configured yet — add one below to start chatting."
