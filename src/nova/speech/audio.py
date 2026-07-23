@@ -12,6 +12,7 @@ than the one doing `write()`.
 from __future__ import annotations
 
 import contextlib
+import logging
 import queue
 
 import numpy as np
@@ -20,6 +21,8 @@ import sounddevice as sd
 from nova.core.errors import SpeechError
 from nova.core.models import AudioDeviceInfo
 
+logger = logging.getLogger(__name__)
+
 SAMPLE_RATE = 16000  # Whisper-native (docs/08 §2)
 FRAME_SAMPLES = 480  # 30ms @ 16kHz, VAD-aligned
 _QUEUE_MAXSIZE = 50  # ~1.5s of frames — bounds memory if a consumer stalls
@@ -27,20 +30,42 @@ _QUEUE_MAXSIZE = 50  # ~1.5s of frames — bounds memory if a consumer stalls
 _NO_MIC_TEXT = "I can't hear right now — you can type to me!"
 
 
-def list_input_devices() -> list[AudioDeviceInfo]:
+# PortAudio's WDM-KS host API doesn't support the blocking read/write this app uses
+# (raises PaErrorCode -9999 "Blocking API not supported yet" on stream open) — exclude it
+# so Settings can never offer a device that's guaranteed to fail (e.g. Bluetooth headsets
+# that Windows exposes only via WDM-KS alongside a working MME/WASAPI entry).
+_WDM_KS_HOSTAPI_NAME = "Windows WDM-KS"
+
+
+def _usable_devices(min_channels_key: str) -> list[AudioDeviceInfo]:
+    hostapis = sd.query_hostapis()
     return [
         AudioDeviceInfo(index=index, name=device["name"])
         for index, device in enumerate(sd.query_devices())
-        if device["max_input_channels"] > 0
+        if device[min_channels_key] > 0
+        and hostapis[device["hostapi"]]["name"] != _WDM_KS_HOSTAPI_NAME
     ]
+
+
+def list_input_devices() -> list[AudioDeviceInfo]:
+    return _usable_devices("max_input_channels")
 
 
 def list_output_devices() -> list[AudioDeviceInfo]:
-    return [
-        AudioDeviceInfo(index=index, name=device["name"])
-        for index, device in enumerate(sd.query_devices())
-        if device["max_output_channels"] > 0
-    ]
+    return _usable_devices("max_output_channels")
+
+
+def _resolve_device(device: int | None, min_channels_key: str) -> int | None:
+    """Falls back to the system default (`None`) if `device` doesn't resolve to a currently
+    usable entry — e.g. a device index persisted to `settings.json` before WDM-KS exclusion
+    existed, or a device that's since been unplugged/renamed. Without this, a stale index
+    crashes stream-open outright instead of degrading to the default device."""
+    if device is None:
+        return None
+    if device in {d.index for d in _usable_devices(min_channels_key)}:
+        return device
+    logger.warning("audio device %d is no longer usable, falling back to system default", device)
+    return None
 
 
 class AudioCapture:
@@ -51,6 +76,7 @@ class AudioCapture:
         self._stream: sd.InputStream | None = None
 
     def start(self, device: int | None) -> None:
+        device = _resolve_device(device, "max_input_channels")
         try:
             self._stream = sd.InputStream(
                 samplerate=SAMPLE_RATE,
@@ -92,6 +118,7 @@ class AudioPlayback:
         self._stream: sd.OutputStream | None = None
 
     def open(self, samplerate: int, channels: int, device: int | None) -> None:
+        device = _resolve_device(device, "max_output_channels")
         try:
             self._stream = sd.OutputStream(
                 samplerate=samplerate, channels=channels, dtype="int16", device=device

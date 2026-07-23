@@ -114,7 +114,7 @@ Provider adapters translate to/from native formats (Gemini `contents`/`functionC
 | Failure | Recovery | User sees |
 |---|---|---|
 | Provider transient (timeout, 5xx, rate limit) | 1 retry same provider → fallback provider (Phase 10 §6) | status bar "Groq (fallback)" (warning tint) |
-| Both providers down | abort loop | ERROR stage + "I can't reach my brain right now — is the internet on?" |
+| Both providers down | abort loop | ERROR stage + the failing provider's own `friendly_message` (e.g. "My connection to Groq needs a fresh key.", or the generic "Something went wrong on my end" if none was set) — NOT a hardcoded "is the internet on?", which used to misreport auth/rate-limit failures as network outages |
 | Prompt hard-blocked (`SafetyBlocked` raised — no candidate generated at all) | short-circuit straight to a gentle refusal, bypassing `Router` entirely; never retried, never falls back (Phase 10 §3.2: the block is a correct outcome, not an outage) | gentle refusal, no ERROR stage |
 | Response soft-filtered (`LLMResponse(finish_reason="safety")` — a candidate did come back, but got filtered) | same gentle-refusal reply as the hard-block case | gentle refusal, no ERROR stage |
 | Malformed tool call | `RepairRoute`: one round-trip appending a corrective tool-error message ("unknown tool X / invalid args: {errors}. Choose from: …") | brief extra "Thinking…" |
