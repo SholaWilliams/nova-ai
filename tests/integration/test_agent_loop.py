@@ -100,12 +100,21 @@ class TestProviderDown:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(time, "sleep", lambda _s: None)
-        omniroute = FakeProvider("omniroute", [Transient("down"), Transient("still down")])
+        # The provider's own friendly_message propagates all the way to the reply (agent.py
+        # surfaces exc.friendly_message, not a hardcoded string) — assert on that real wiring
+        # rather than a specific provider's copy.
+        omniroute = FakeProvider(
+            "omniroute",
+            [
+                Transient("down"),
+                Transient("still down", friendly_message="OmniRoute isn't responding right now."),
+            ],
+        )
         agent, events = _build_stack(omniroute)
 
         reply = agent.handle(_user_input("hello?"))
 
-        assert reply.text == "I can't reach my brain right now — is the internet on?"
+        assert reply.text == "OmniRoute isn't responding right now."
         error_events = [e for e in events if e.stage == PipelineStage.ERROR]
         assert len(error_events) == 1
         assert error_events[0].payload == {"error_code": "provider_unavailable"}
@@ -114,7 +123,7 @@ class TestProviderDown:
             for e in events
             if e.stage == PipelineStage.RESPONDING and e.status == EventStatus.COMPLETED
         )
-        assert responding.detail == "I can't reach my brain right now — is the internet on?"
+        assert responding.detail == "OmniRoute isn't responding right now."
 
 
 class TestCancellationBetweenIterations:
