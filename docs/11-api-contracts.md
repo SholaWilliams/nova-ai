@@ -204,7 +204,7 @@ class Agent:                                             # Phase 6
 
 ```json
 {"version": 1,
- "provider": {"omniroute_base_url": "http://127.0.0.1:20128", "omniroute_model": "auto/coding"},
+ "provider": {"omniroute_base_url": "http://127.0.0.1:20128", "omniroute_model": "auto/chat"},
  "voice": {"tts_enabled": true, "voice": "cosette",
  "provider": {"active": "gemini", "gemini_model": "gemini-2.5-flash",
                "groq_model": "llama-3.3-70b-versatile"},

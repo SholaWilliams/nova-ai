@@ -38,12 +38,11 @@ class LLMProvider(ABC):
   its own routing/circuit-breaking/quota-lending. Request/response mapping reuses
   `_openai_compat.py`, the exact adapter shape `OpenRouterProvider` established at M8 — same
   dialect, this module is close to a rename-and-repoint of that one.
-- Default model **`auto/coding`** (OmniRoute's own "quality-first" combo name) ⚠️
-  **unverified** — OmniRoute's public docs don't list a specific model id with confirmed
-  tool-calling support the way OpenRouter's catalog did; owner must confirm/replace via their
-  own OmniRoute dashboard/model catalog (see Phase 4 TD-4). Settings exposes an editable model
-  field, same pattern OpenRouter used — changing it rebuilds the live `OmniRouteProvider`
-  instance via `ProviderManager.set_provider()`.
+- Default model **`auto/chat`** — verified against a live local OmniRoute instance's
+  `GET /v1/models` (2026-07-23): every `auto/*` combo, including `auto/chat`, reports
+  `tool_calling: true` (see Phase 4 TD-4). Settings exposes an editable model field, same
+  pattern OpenRouter used — changing it rebuilds the live `OmniRouteProvider` instance via
+  `ProviderManager.set_provider()`.
 - No hard-safety-block concept documented in OmniRoute's API surface (like OpenRouter/Groq,
   unlike Gemini) — this adapter never raises `SafetyBlocked`.
 - The OpenRouter-specific `provider.quantizations` free-tier mitigation (M8) does **not**
@@ -128,5 +127,6 @@ M9 collapsed three providers down to one (OmniRoute) rather than adding a fourth
 | 1.1.0 | 2026-07-09 | M2: default models resolved (`gemini-3.5-flash`, `openai/gpt-oss-120b`; Phase 4 TD-4); §2 clarifies the hard-block/soft-filter safety split and that Groq never raises `SafetyBlocked`; §4/§5 updated to match the actual constructor-injection pattern (`app.py` builds providers and passes them into `ProviderManager`, no static `PROVIDERS` dict) and the lighter network-free startup check M2 actually implements. |
 | 1.2.0 | 2026-07-23 | M8: §2.3 OpenRouter section added (was previously undocumented despite the code citing it); §5 moves OpenRouter from "future" to shipped; documents the free-tier quantization-routing pin and the provider-agnostic degenerate-output retry in `agent.py`. |
 | 1.3.0 | 2026-07-23 | M9 (Stream B), owner direction: Gemini/Groq(-chat)/OpenRouter superseded by OmniRoute as the sole LLM backend (§2.1 rewritten); §3 ProviderManager simplified to single-provider retry-only (fallback/cooldown state machine removed, not just unused); §4 API key management collapsed to one key. Default model `auto/coding` flagged ⚠️ unverified. |
+| 1.4.0 | 2026-07-23 | M9 follow-up: default model verified against a live OmniRoute instance and swapped `auto/coding` → `auto/chat` (§2.1) — better fit for a general assistant, no longer a placeholder. |
 
 **Exit check:** agent is 100 % dialect-free; every provider failure mode maps to a defined behavior; fallback is observable in the UI; adding provider #3 touches two files + config.
