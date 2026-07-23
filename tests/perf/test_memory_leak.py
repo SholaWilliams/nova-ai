@@ -39,7 +39,7 @@ def test_no_growing_leak_trend_across_50_requests(tmp_path: Path) -> None:
     bus = EventBus()
     memory = MemoryService(tmp_path)
     provider = FakeProvider("gemini", [_reply(i) for i in range(_REQUEST_COUNT)])
-    manager = ProviderManager({"gemini": provider}, active="gemini")
+    manager = ProviderManager(provider)
     agent = Agent(
         manager,
         Planner(system_prompt="you are NOVA, a friendly assistant"),

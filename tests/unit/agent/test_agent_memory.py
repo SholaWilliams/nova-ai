@@ -61,7 +61,7 @@ def _make_agent_with_memory(
     events: list[PipelineEvent] = []
     bus.subscribe(events.append)
     stage_recorder = StageRecorder(bus)
-    manager = ProviderManager({"fake": provider}, active="fake")
+    manager = ProviderManager(provider)
 
     registry = None
     executor = None
@@ -185,7 +185,7 @@ class TestTurnPersistence:
         # blow up without a MemoryService, since persist_turn is conditional on self._memory.
         provider = FakeProvider("fake", [_reply("hi there")])
         bus = EventBus()
-        manager = ProviderManager({"fake": provider}, active="fake")
+        manager = ProviderManager(provider)
         agent = Agent(manager, Planner("sys"), Router(), ConversationState(), bus)
 
         reply = agent.handle(_user_input("hi"))

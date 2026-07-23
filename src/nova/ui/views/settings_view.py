@@ -37,7 +37,7 @@ from nova.core.models import AudioDeviceInfo
 from nova.ui import theme
 from nova.ui.theme import Color, Radius, Spacing
 
-_PROVIDER_LABELS = {"gemini": "Gemini", "groq": "Groq", "openrouter": "OpenRouter"}
+_PROVIDER_LABELS = {"omniroute": "OmniRoute"}
 
 # pocket-tts's built-in, non-gated voice catalog (docs/04 TD-6 revision, confirmed against
 # the installed package — voice-cloning hf:// URLs need gated HF access, these plain names
@@ -156,12 +156,11 @@ class _KeyRow(QWidget):
 class SettingsView(QWidget):
     """The Settings screen. M2: Brain section only (provider pick, keys, hot-swap)."""
 
-    provider_selected = Signal(str)  # "gemini" | "groq"
     key_changed = Signal(str, str)  # provider_name, new_value
     test_requested = Signal(str)  # provider_name
     tts_enabled_changed = Signal(bool)
     voice_changed = Signal(str)
-    openrouter_model_changed = Signal(str)
+    omniroute_model_changed = Signal(str)
     input_device_changed = Signal(object)  # int | None
     output_device_changed = Signal(object)  # int | None
     default_city_changed = Signal(str)
@@ -216,34 +215,23 @@ class SettingsView(QWidget):
         title.setFont(theme.font(theme.FontRole.DISPLAY))
         section_layout.addWidget(title)
 
-        self._radio_group = QButtonGroup(self)
-        for name in ("gemini", "groq", "openrouter"):
-            radio = QRadioButton(_PROVIDER_LABELS[name], section)
-            radio.setChecked(settings.provider.active == name)
-            radio.toggled.connect(
-                lambda checked, provider_name=name: (
-                    checked and self.provider_selected.emit(provider_name)
-                )
-            )
-            self._radio_group.addButton(radio)
-            section_layout.addWidget(radio)
-
+        # M9: OmniRoute is the sole LLM backend — no provider picker needed anymore (there's
+        # only one), just its key row and model field.
         self._key_rows: dict[str, _KeyRow] = {}
-        for name in ("gemini", "groq", "openrouter"):
-            row = _KeyRow(name, section)
-            row.key_changed.connect(self.key_changed)
-            row.test_requested.connect(self.test_requested)
-            self._key_rows[name] = row
-            section_layout.addWidget(row)
+        row = _KeyRow("omniroute", section)
+        row.key_changed.connect(self.key_changed)
+        row.test_requested.connect(self.test_requested)
+        self._key_rows["omniroute"] = row
+        section_layout.addWidget(row)
 
         model_row = QHBoxLayout()
-        model_row.addWidget(QLabel("OpenRouter model", section))
-        self._openrouter_model_combo = QComboBox(section)
-        self._openrouter_model_combo.setEditable(True)
-        self._openrouter_model_combo.addItem(settings.provider.openrouter_model)
-        self._openrouter_model_combo.setCurrentText(settings.provider.openrouter_model)
-        self._openrouter_model_combo.textActivated.connect(self.openrouter_model_changed)
-        model_row.addWidget(self._openrouter_model_combo, 1)
+        model_row.addWidget(QLabel("OmniRoute model", section))
+        self._omniroute_model_combo = QComboBox(section)
+        self._omniroute_model_combo.setEditable(True)
+        self._omniroute_model_combo.addItem(settings.provider.omniroute_model)
+        self._omniroute_model_combo.setCurrentText(settings.provider.omniroute_model)
+        self._omniroute_model_combo.textActivated.connect(self.omniroute_model_changed)
+        model_row.addWidget(self._omniroute_model_combo, 1)
         section_layout.addLayout(model_row)
 
         return section
@@ -430,7 +418,7 @@ class SettingsView(QWidget):
 
     def focus_first_key_field(self) -> None:
         """The banner's "Fix now" affordance target (FR-47)."""
-        first_row = self._key_rows.get("gemini")
+        first_row = self._key_rows.get("omniroute")
         if first_row is not None:
             first_row.entry.setFocus()
 

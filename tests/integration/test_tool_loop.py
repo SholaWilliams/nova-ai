@@ -94,9 +94,9 @@ def _build(
     for tool in tools:
         registry.register(tool)
     executor = Executor(registry, bus, ToolContext(settings=Settings()), tool_timeout_s=2.0)
-    provider = FakeProvider("gemini", script)
+    provider = FakeProvider("omniroute", script)
     agent = Agent(
-        ProviderManager({"gemini": provider}, active="gemini"),
+        ProviderManager(provider),
         Planner(system_prompt="you are NOVA"),
         Router(known_tool_names=registry.names),
         ConversationState(),

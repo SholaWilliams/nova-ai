@@ -44,7 +44,7 @@ def _make_agent(
     bus = EventBus()
     events: list[PipelineEvent] = []
     bus.subscribe(events.append)
-    manager = ProviderManager({"fake": provider}, active="fake")
+    manager = ProviderManager(provider)
     agent = Agent(
         manager,
         Planner(system_prompt="you are NOVA"),
@@ -104,7 +104,7 @@ def test_responding_completed_detail_carries_the_reply_text() -> None:
 def test_handle_records_the_turn_in_conversation_state() -> None:
     provider = FakeProvider("fake", [_reply("hi there")])
     bus = EventBus()
-    manager = ProviderManager({"fake": provider}, active="fake")
+    manager = ProviderManager(provider)
     state = ConversationState()
     agent = Agent(manager, Planner("sys"), Router(), state, bus)
 
@@ -119,7 +119,7 @@ def test_handle_records_the_turn_in_conversation_state() -> None:
 def test_second_turn_sends_prior_history_to_the_provider() -> None:
     provider = FakeProvider("fake", [_reply("first answer"), _reply("second answer")])
     bus = EventBus()
-    manager = ProviderManager({"fake": provider}, active="fake")
+    manager = ProviderManager(provider)
     agent = Agent(manager, Planner("sys"), Router(), ConversationState(), bus)
 
     agent.handle(_user_input("first question"))
@@ -227,7 +227,7 @@ def test_degenerate_response_twice_apologizes_instead_of_showing_garbage() -> No
 def test_cancel_flag_resets_at_the_start_of_each_new_request() -> None:
     provider = FakeProvider("fake", [_reply("first"), _reply("second")])
     bus = EventBus()
-    manager = ProviderManager({"fake": provider}, active="fake")
+    manager = ProviderManager(provider)
     agent = Agent(manager, Planner("sys"), Router(), ConversationState(), bus)
 
     agent.handle(_user_input("first"))
@@ -249,7 +249,7 @@ def test_cancel_during_loop_raises_agent_cancelled_at_the_next_boundary() -> Non
 
     provider = CancellingProvider("fake", [_tool_call_response(), _reply("should not be reached")])
     bus = EventBus()
-    manager = ProviderManager({"fake": provider}, active="fake")
+    manager = ProviderManager(provider)
     agent = Agent(manager, Planner("sys"), Router(), ConversationState(), bus)
     agent_holder.append(agent)
 

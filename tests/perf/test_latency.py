@@ -43,7 +43,7 @@ def test_thinking_started_fires_before_the_slow_provider_call_returns() -> None:
 
     reply = LLMResponse(text="hi!", tool_calls=(), finish_reason="stop", usage=TokenUsage(10, 5))
     provider = _SlowProvider("gemini", [reply])
-    manager = ProviderManager({"gemini": provider}, active="gemini")
+    manager = ProviderManager(provider)
     agent = Agent(
         manager,
         Planner(system_prompt="you are NOVA, a friendly assistant"),

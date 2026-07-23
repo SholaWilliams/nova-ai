@@ -45,12 +45,12 @@ def _tool_call_response() -> LLMResponse:
 
 
 def _build_stack(
-    providers: dict[str, FakeProvider], active: str, max_iterations: int = 5
+    provider: FakeProvider, max_iterations: int = 5
 ) -> tuple[Agent, list[PipelineEvent]]:
     bus = EventBus()
     events: list[PipelineEvent] = []
     bus.subscribe(events.append)
-    manager = ProviderManager(dict(providers), active=active)
+    manager = ProviderManager(provider)
     agent = Agent(
         manager,
         Planner(system_prompt="you are NOVA, a friendly assistant"),
@@ -70,8 +70,8 @@ class TestDirectAnswer:
     """A typed request with no tool call: THINKING and RESPONDING are the only real stages."""
 
     def test_event_sequence_and_reply(self) -> None:
-        gemini = FakeProvider("gemini", [_reply("It's sunny today!")])
-        agent, events = _build_stack({"gemini": gemini}, active="gemini")
+        omniroute = FakeProvider("omniroute", [_reply("It's sunny today!")])
+        agent, events = _build_stack(omniroute)
 
         reply = agent.handle(_user_input("what's the weather?"))
 
@@ -91,27 +91,30 @@ class TestDirectAnswer:
         assert PipelineStage.ERROR not in {e.stage for e in events}
 
 
-class TestProviderFallback:
-    """Primary scripted to fail entirely: the fallback provider answers, status reflects it."""
+class TestProviderDown:
+    """No fallback exists anymore (M9: OmniRoute is the sole backend, no cloud fallback) — a
+    provider failure (after the manager's one retry) surfaces as an ERROR event and a
+    conversational apology, not a silent hop to a second provider."""
 
-    def test_falls_back_and_still_replies_with_no_error_event(
+    def test_provider_failure_emits_error_and_still_replies_conversationally(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(time, "sleep", lambda _s: None)
-        gemini = FakeProvider("gemini", [Transient("primary is down"), Transient("still down")])
-        groq = FakeProvider("groq", [_reply("Groq answering instead")])
-        agent, events = _build_stack({"gemini": gemini, "groq": groq}, active="gemini")
+        omniroute = FakeProvider("omniroute", [Transient("down"), Transient("still down")])
+        agent, events = _build_stack(omniroute)
 
         reply = agent.handle(_user_input("hello?"))
 
-        assert reply.text == "Groq answering instead"
-        assert PipelineStage.ERROR not in {e.stage for e in events}
+        assert reply.text == "I can't reach my brain right now — is the internet on?"
+        error_events = [e for e in events if e.stage == PipelineStage.ERROR]
+        assert len(error_events) == 1
+        assert error_events[0].payload == {"error_code": "provider_unavailable"}
         responding = next(
             e
             for e in events
             if e.stage == PipelineStage.RESPONDING and e.status == EventStatus.COMPLETED
         )
-        assert responding.detail == "Groq answering instead"
+        assert responding.detail == "I can't reach my brain right now — is the internet on?"
 
 
 class TestCancellationBetweenIterations:
@@ -127,9 +130,9 @@ class TestCancellationBetweenIterations:
                 return result
 
         provider = CancellingProvider(
-            "gemini", [_tool_call_response(), _reply("should never be reached")]
+            "omniroute", [_tool_call_response(), _reply("should never be reached")]
         )
-        agent, events = _build_stack({"gemini": provider}, active="gemini")
+        agent, events = _build_stack(provider)
         agent_holder.append(agent)
 
         with pytest.raises(AgentCancelled):
@@ -143,8 +146,8 @@ class TestIterationCap:
     """The provider never produces a direct answer: the loop exhausts its budget honestly."""
 
     def test_hits_cap_emits_error_and_still_apologizes_conversationally(self) -> None:
-        provider = FakeProvider("gemini", [_tool_call_response() for _ in range(4)])
-        agent, events = _build_stack({"gemini": provider}, active="gemini", max_iterations=4)
+        provider = FakeProvider("omniroute", [_tool_call_response() for _ in range(4)])
+        agent, events = _build_stack(provider, max_iterations=4)
 
         reply = agent.handle(_user_input())
 
@@ -165,9 +168,9 @@ class TestDefensiveRepairRoundTrip:
 
     def test_unknown_tool_call_triggers_one_repair_round_trip_then_recovers(self) -> None:
         provider = FakeProvider(
-            "gemini", [_tool_call_response(), _reply("Here's my answer without any tools")]
+            "omniroute", [_tool_call_response(), _reply("Here's my answer without any tools")]
         )
-        agent, events = _build_stack({"gemini": provider}, active="gemini")
+        agent, events = _build_stack(provider)
 
         reply = agent.handle(_user_input())
 
