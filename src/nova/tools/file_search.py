@@ -28,7 +28,9 @@ _TYPE_ALIASES: dict[str, frozenset[str]] = {
 Location = Literal["documents", "desktop", "downloads", "pictures", "all"]
 
 
-def _default_folders() -> dict[str, Path]:
+def default_user_folders() -> dict[str, Path]:
+    """The NFR-6 user-scoped folders — shared with `file_opener` so it can only open what
+    `file_search` could have found."""
     home = Path.home()
     return {
         "documents": home / "Documents",
@@ -78,7 +80,7 @@ class FileSearchTool(Tool):
     )
 
     def __init__(self, folders: dict[str, Path] | None = None) -> None:
-        self._folders = folders if folders is not None else _default_folders()
+        self._folders = folders if folders is not None else default_user_folders()
 
     def execute(self, args: BaseModel, ctx: ToolContext) -> ToolOutput:
         del ctx

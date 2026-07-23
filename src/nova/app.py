@@ -49,6 +49,7 @@ from nova.tools.base import ToolContext
 from nova.tools.browser import BrowserTool
 from nova.tools.calculator import CalculatorTool
 from nova.tools.desktop_organizer import DesktopOrganizerTool
+from nova.tools.file_opener import FileOpenerTool
 from nova.tools.file_search import FileSearchTool
 from nova.tools.memory_tool import MemoryTool
 from nova.tools.registry import ToolRegistry
@@ -105,7 +106,7 @@ def _build_providers(secrets: Secrets, settings: Settings) -> dict[str, LLMProvi
 
 
 def _build_registry(secrets: Secrets, settings: Settings, data_dir: Path) -> ToolRegistry:
-    """Register all seven v1.0 tools (docs/07). Order = SELECTING_TOOL display order."""
+    """Register all eight v1.0 tools (docs/07). Order = SELECTING_TOOL display order."""
     desktop = (
         Path(secrets.desktop_override) if secrets.desktop_override else (Path.home() / "Desktop")
     )
@@ -118,6 +119,7 @@ def _build_registry(secrets: Secrets, settings: Settings, data_dir: Path) -> Too
     registry.register(BrowserTool(blocked_domains=blocked))
     registry.register(AppLauncherTool())
     registry.register(FileSearchTool())
+    registry.register(FileOpenerTool())
     registry.register(DesktopOrganizerTool(desktop=desktop, manifest_dir=data_dir))
     registry.register(MemoryTool())
     return registry

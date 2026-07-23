@@ -1,6 +1,6 @@
 """ToolRegistry + the schema-drift golden test (docs/11 §7, T-301).
 
-The golden fixture freezes the LLM-facing JSON Schemas of all seven v1.0 tools. A params
+The golden fixture freezes the LLM-facing JSON Schemas of all eight v1.0 tools. A params
 change that isn't a deliberate contract change fails here; a deliberate one regenerates the
 golden with `pytest -m record tests/unit/tools/test_registry.py`.
 """
@@ -18,6 +18,7 @@ from nova.tools.base import Tool, ToolContext, ToolOutput, ToolSpec
 from nova.tools.browser import BrowserTool
 from nova.tools.calculator import CalculatorTool
 from nova.tools.desktop_organizer import DesktopOrganizerTool
+from nova.tools.file_opener import FileOpenerTool
 from nova.tools.file_search import FileSearchTool
 from nova.tools.memory_tool import MemoryTool
 from nova.tools.registry import ToolRegistry
@@ -33,6 +34,7 @@ def _full_registry(tmp_path: Path) -> ToolRegistry:
     registry.register(BrowserTool())
     registry.register(AppLauncherTool(start_menu_dirs=[]))
     registry.register(FileSearchTool())
+    registry.register(FileOpenerTool())
     registry.register(DesktopOrganizerTool(desktop=tmp_path, manifest_dir=tmp_path))
     registry.register(MemoryTool())
     return registry
@@ -88,7 +90,7 @@ def test_output_requires_summary() -> None:
         ToolOutput(data={"result": 1})
 
 
-def test_all_seven_schemas_match_golden(tmp_path: Path) -> None:
+def test_all_eight_schemas_match_golden(tmp_path: Path) -> None:
     generated = {
         s.name: {"description": s.description, "parameters": s.parameters}
         for s in _full_registry(tmp_path).schemas()
