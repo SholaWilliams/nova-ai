@@ -4,8 +4,8 @@
 |---|---|
 | **Document** | Phase 7 — Tool Specifications |
 | **Status** | Ready for review |
-| **Version** | 1.0.0 |
-| **Last updated** | 2026-07-08 |
+| **Version** | 1.1.0 |
+| **Last updated** | 2026-07-23 |
 | **Depends on** | Phase 3 (§13 tool flow), Phase 6 (Executor), Phase 4 (TD-8, TD-9) |
 | **Feeds into** | Phase 11 (schemas), Phase 12 (per-tool tasks), Phase 13 (tool tests) |
 
@@ -89,9 +89,21 @@ Every tool subclasses `Tool` (`tools/base.py`) and provides a `ToolSpec`:
 | **Execution** | `pathlib.rglob` across the named user folders only (NFR-6), depth ≤ 6, case-insensitive substring + fuzzy match, hard stop at 200 entries scanned-matches or 8 s. Returns top 10 by (match score, mtime) |
 | **Outputs** | `{matches: [{name, folder, size_kb, modified}], count, truncated: bool, summary: "I found 3 files named like 'dragon drawing'"}` |
 | **Errors** | `no_matches` (with hint), `location_unavailable` |
-| **Future** | Content search (Windows Search index); open-found-file follow-up action |
+| **Future** | Content search (Windows Search index) |
 
-## 7. desktop_organizer
+## 7. file_opener
+
+| | |
+|---|---|
+| **Purpose** | Open one file already found by `file_search` with its default app — the follow-up action this doc originally deferred to "future" (v1.1) |
+| **Sensitive** | No (opening is benign & visible, same tier as `app_launcher`; no write/delete capability) |
+| **Inputs** | `folder: str`, `name: str` — copied straight from a `file_search` match, never a free-form path |
+| **Execution** | Joins `folder`/`name`, resolves it, and rejects anything outside the same NFR-6 user-scoped folders `file_search` draws from (`Path.is_relative_to`) before touching disk. Launch via `os.startfile` — never a shell string (A-1) |
+| **Outputs** | `{opened: bool, path: str, summary: "Opening Pole Upload Tracker.xlsx"}` |
+| **Errors** | `location_unavailable` (outside the allowed folders), `file_not_found` (moved/deleted since the search), `open_failed` |
+| **Future** | Open-with-specific-app override |
+
+## 8. desktop_organizer
 
 | | |
 |---|---|
@@ -103,7 +115,7 @@ Every tool subclasses `Tool` (`tools/base.py`) and provides a `ToolSpec`:
 | **Errors** | `nothing_to_do`, `denied` (user said no), `partial_failure` (per-file report; successfully moved files stay in manifest so undo still works), `no_undo_available` |
 | **Future** | Custom rules ("put school stuff in School"); organize Downloads; scheduled tidy (would violate NG-4 — only ever on-request) |
 
-## 8. memory_tool
+## 9. memory_tool
 
 | | |
 |---|---|
@@ -117,7 +129,7 @@ Every tool subclasses `Tool` (`tools/base.py`) and provides a `ToolSpec`:
 
 ---
 
-## 9. Future Tools (registry-ready, post-1.0)
+## 10. Future Tools (registry-ready, post-1.0)
 
 | Tool | Sketch | Sensitive |
 |------|--------|-----------|
@@ -130,7 +142,7 @@ Every tool subclasses `Tool` (`tools/base.py`) and provides a `ToolSpec`:
 
 Each future tool gets this same spec template before implementation (PROJECT_RULES.md, Phase 19).
 
-## 10. Tool Authoring Checklist (feeds SC-9)
+## 11. Tool Authoring Checklist (feeds SC-9)
 
 1. Spec written using the §1 template (this doc gains a section).
 2. Params as a Pydantic model with field descriptions (the LLM reads them).
@@ -147,5 +159,6 @@ Each future tool gets this same spec template before implementation (PROJECT_RUL
 | Version | Date | Change |
 |---------|------|--------|
 | 1.0.0 | 2026-07-08 | Initial version for Phase 7 review. |
+| 1.1.0 | 2026-07-23 | Added `file_opener` (§7): opens a `file_search` match by folder+name, restricted to the same NFR-6 folders. Fixes a reported bug where "open it" after a file_search hit fell back to `app_launcher`, which only opens a blank app instance. Renumbered §7–§10 to §8–§11. |
 
-**Exit check:** all seven v1.0 tools fully specified (purpose/inputs/outputs/errors/future); sensitivity flags agreed (only desktop_organizer gated); no tool can delete anything.
+**Exit check:** all eight v1.0 tools fully specified (purpose/inputs/outputs/errors/future); sensitivity flags agreed (only desktop_organizer gated); no tool can delete anything.

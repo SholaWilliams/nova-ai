@@ -77,6 +77,27 @@
       "type": "object"
     }
   },
+  "file_opener": {
+    "description": "Open a specific file with its default app, using the folder and name from a file_search result. Use this right after file_search when the user confirms they want that file opened, e.g. 'yes, open it' \u2014 never app_launcher, which only opens a blank app with nothing loaded.",
+    "parameters": {
+      "description": "Arguments for the file opener tool.",
+      "properties": {
+        "folder": {
+          "description": "The file's folder, from a file_search result.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The file's name, from a file_search result.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "folder",
+        "name"
+      ],
+      "type": "object"
+    }
+  },
   "file_search": {
     "description": "Find files by name in the user's Documents, Desktop, Downloads or Pictures. Use when the user asks where a file is, e.g. 'find my dragon drawing' or 'where is my homework'. It only looks \u2014 it never changes anything.",
     "parameters": {
