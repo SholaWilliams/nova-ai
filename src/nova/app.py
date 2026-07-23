@@ -41,8 +41,8 @@ from nova.speech.audio import AudioCapture, list_input_devices, list_output_devi
 from nova.speech.service import SpeechService
 from nova.speech.stt.base import STTEngine
 from nova.speech.stt.groq_whisper import GroqSTTEngine
-from nova.speech.tts.pocket_tts import PocketTTSEngine
 from nova.speech.tts.pyttsx3_engine import Pyttsx3Engine
+from nova.speech.tts.remote_tts import RemoteTTSEngine
 from nova.speech.worker import SpeechInWorker, SpeechOutWorker
 from nova.tools.app_launcher import AppLauncherTool
 from nova.tools.base import ToolContext
@@ -132,7 +132,7 @@ def _build_speech_service(secrets: Secrets, settings: Settings, bus: EventBus) -
     )
     return SpeechService(
         stt_engine=stt_engine,
-        primary_tts=PocketTTSEngine(),
+        primary_tts=RemoteTTSEngine(settings.voice.tts_base_url, settings.voice.tts_tenant_id),
         fallback_tts=Pyttsx3Engine(),
         audio_capture_factory=AudioCapture,
         bus=bus,

@@ -98,6 +98,10 @@ class VoiceSettings(BaseModel):
     # "cosette" chosen for the association (a child character) — actual timbre unauditioned
     # in this environment (no speakers); owner should confirm/replace once heard for real.
     voice: str = "cosette"
+    # M9: takada-tts-service connection config (docs/04 TD-6) — a locally-run microservice,
+    # not a cloud endpoint, so no API key: see `Secrets` docstring (NFR-8 only covers secrets).
+    tts_base_url: str = "http://127.0.0.1:8020"
+    tts_tenant_id: str = "nova"
     input_device: int | None = None
     output_device: int | None = None
     sound_effects: bool = True
