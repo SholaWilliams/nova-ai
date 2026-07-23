@@ -209,7 +209,7 @@ class Agent:                                             # Phase 6
  "provider": {"active": "gemini", "gemini_model": "gemini-2.5-flash",
                "groq_model": "llama-3.3-70b-versatile"},
  "voice": {"tts_enabled": true, "voice": "cosette",
-            "tts_base_url": "http://127.0.0.1:8020", "tts_tenant_id": "nova",
+            "tts_base_url": "http://127.0.0.1:8000", "tts_tenant_id": "nova",
             "input_device": null, "output_device": null, "sound_effects": true},
  "weather": {"default_city": "Lagos"},
  "ui": {"accent": "cyan", "reduced_motion": false, "pipeline_visible": true},
