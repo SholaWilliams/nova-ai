@@ -1,0 +1,31 @@
+{
+  "id": "gen-123",
+  "object": "chat.completion",
+  "created": 1717000000,
+  "model": "nvidia/nemotron-3-super-120b-a12b:free",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_xyz789",
+            "type": "function",
+            "function": {
+              "name": "weather",
+              "arguments": "{\"city\": \"Lagos\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 10,
+    "completion_tokens": 0,
+    "total_tokens": 10
+  }
+}

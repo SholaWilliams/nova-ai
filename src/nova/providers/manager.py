@@ -21,7 +21,7 @@ from nova.providers.base import GenerateOptions, LLMProvider, LLMResponse
 
 _COOLDOWN_S = 60.0
 _RETRY_BACKOFF_S = 1.0
-_DISPLAY_NAMES = {"gemini": "Gemini", "groq": "Groq"}
+_DISPLAY_NAMES = {"gemini": "Gemini", "groq": "Groq", "openrouter": "OpenRouter"}
 
 
 class ProviderManager(QObject):

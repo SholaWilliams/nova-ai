@@ -7,7 +7,8 @@ under `tests/`, so `agent`'s own test suite can construct one without reaching a
 `tests/`/`src/` boundary.
 
 Safety boundary: never add this to `manager.PROVIDERS` or to `ProviderSettings.active`'s
-`Literal["gemini", "groq"]` — that's what keeps it importable-but-never-user-selectable.
+`Literal["gemini", "groq", "openrouter"]` — that's what keeps it importable-but-never-
+user-selectable.
 """
 
 from __future__ import annotations

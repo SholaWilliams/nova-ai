@@ -17,8 +17,9 @@ from groq.types.chat.chat_completion import ChatCompletion
 
 from nova.core.errors import AuthError, RateLimited, Transient
 from nova.core.models import ChatMessage, ToolCall
+from nova.providers._openai_compat import to_openai_message, to_openai_tool
 from nova.providers.base import GenerateOptions
-from nova.providers.groq import GroqProvider, _to_groq_message, _to_groq_tool
+from nova.providers.groq import GroqProvider
 
 _FIXTURES = Path(__file__).parents[2] / "fixtures" / "providers" / "groq"
 _OPTS = GenerateOptions()
@@ -43,18 +44,23 @@ def provider() -> GroqProvider:
 
 
 class TestOutboundConversion:
+    """Exercises the shared `_openai_compat` mappers (docs/10 §2.3) via Groq's usage of them —
+    Groq and OpenRouter both consume these unchanged; see test_openrouter.py for that adapter's
+    own response-parsing/error-mapping tests.
+    """
+
     def test_plain_messages_map_role_and_content(self) -> None:
-        assert _to_groq_message(ChatMessage(role="user", content="hi")) == {
+        assert to_openai_message(ChatMessage(role="user", content="hi")) == {
             "role": "user",
             "content": "hi",
         }
-        assert _to_groq_message(ChatMessage(role="system", content="be nice")) == {
+        assert to_openai_message(ChatMessage(role="system", content="be nice")) == {
             "role": "system",
             "content": "be nice",
         }
 
     def test_tool_message_carries_tool_call_id(self) -> None:
-        message = _to_groq_message(
+        message = to_openai_message(
             ChatMessage(role="tool", content="unknown tool", tool_call_id="call_1")
         )
 
@@ -63,7 +69,7 @@ class TestOutboundConversion:
     def test_assistant_message_with_tool_calls_serializes_arguments_as_json_string(self) -> None:
         call = ToolCall(call_id="call_1", tool_name="weather", arguments={"city": "Lagos"})
 
-        message = _to_groq_message(ChatMessage(role="assistant", content=None, tool_calls=(call,)))
+        message = to_openai_message(ChatMessage(role="assistant", content=None, tool_calls=(call,)))
 
         assert message["role"] == "assistant"
         assert message["tool_calls"][0]["id"] == "call_1"
@@ -79,7 +85,7 @@ class TestOutboundConversion:
             parameters={"type": "object"},
         )
 
-        tool = _to_groq_tool(schema)
+        tool = to_openai_tool(schema)
 
         assert tool == {
             "type": "function",
