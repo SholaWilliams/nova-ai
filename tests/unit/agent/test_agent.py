@@ -11,7 +11,7 @@ from nova.agent.agent import Agent, AgentCancelled, _looks_degenerate
 from nova.agent.planner import Planner
 from nova.agent.router import Router
 from nova.agent.state import ConversationState
-from nova.core.errors import SafetyBlocked, Transient
+from nova.core.errors import AuthError, SafetyBlocked, Transient
 from nova.core.events import EventBus, EventStatus, PipelineEvent, PipelineStage
 from nova.core.models import ToolCall, UserInput
 from nova.providers.base import LLMResponse, TokenUsage
@@ -188,10 +188,26 @@ def test_provider_unavailable_emits_error_and_apologizes(monkeypatch: pytest.Mon
 
     reply = agent.handle(_user_input())
 
-    assert "internet" in reply.text.lower()
+    assert reply.text == "Something went wrong on my end — let's try that again."
     error_events = [e for e in events if e.stage == PipelineStage.ERROR]
     assert len(error_events) == 1
     assert error_events[0].payload == {"error_code": "provider_unavailable"}
+
+
+def test_provider_unavailable_surfaces_the_real_cause_not_a_generic_internet_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bad API key (or any other specific provider failure) must not be reported to the
+    user as a network outage — that sent people chasing their internet connection for a
+    problem that was actually an expired key (docs/06 §6)."""
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
+    auth_error = AuthError("HTTP 401", friendly_message="My connection to Groq needs a fresh key.")
+    provider = FakeProvider("fake", [auth_error])
+    agent, _events = _make_agent(provider)
+
+    reply = agent.handle(_user_input())
+
+    assert reply.text == "My connection to Groq needs a fresh key."
 
 
 def test_looks_degenerate_flags_unk_spam_but_not_normal_text() -> None:

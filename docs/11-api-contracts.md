@@ -206,6 +206,10 @@ class Agent:                                             # Phase 6
 {"version": 1,
  "provider": {"omniroute_base_url": "http://127.0.0.1:20128", "omniroute_model": "auto/coding"},
  "voice": {"tts_enabled": true, "voice": "cosette",
+ "provider": {"active": "gemini", "gemini_model": "gemini-2.5-flash",
+               "groq_model": "llama-3.3-70b-versatile"},
+ "voice": {"tts_enabled": true, "voice": "cosette",
+            "tts_base_url": "http://127.0.0.1:8020", "tts_tenant_id": "nova",
             "input_device": null, "output_device": null, "sound_effects": true},
  "weather": {"default_city": "Lagos"},
  "ui": {"accent": "cyan", "reduced_motion": false, "pipeline_visible": true},
@@ -234,5 +238,6 @@ Unknown fields are preserved on rewrite (forward compatibility); invalid fields 
 | 1.0.0 | 2026-07-08 | Initial version for Phase 11 review. |
 | 1.1.0 | 2026-07-10 | M4: additive `SpeechService` amendments (`end_listening()`, `warm_up_tts()`, `tts_mode_changed` signal); added `AudioDeviceInfo` to §1's core data types (Settings device dropdowns, FR-12). |
 | 1.2.0 | 2026-07-23 | M9 (Stream B): `ProviderSettings` shape replaced — `active`/`gemini_model`/`groq_model`/`openrouter_model` → `omniroute_base_url`/`omniroute_model` (docs/04 TD-4, sole-backend revision). |
+| 1.2.0 | 2026-07-23 | M9 (Stream A): additive `VoiceSettings` fields `tts_base_url`, `tts_tenant_id` (docs/04 TD-6 — `takada-tts-service` connection config). |
 
 **Exit check:** every cross-layer arrow in Phase 3 §2 has a typed contract here; all external data is validated at entry; wire formats are golden-testable.
