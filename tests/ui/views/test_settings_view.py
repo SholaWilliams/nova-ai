@@ -1,6 +1,7 @@
 """Unit tests for nova.ui.views.settings_view — Brain/Voice section wiring (T-209/T-407)."""
 
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLineEdit
 
 from nova.core.config import Settings
@@ -198,6 +199,22 @@ def test_changing_voice_combo_emits_voice_changed(view: SettingsView, qtbot: obj
         view._voice_combo.setCurrentText("alba")
 
     assert blocker.args == ["alba"]
+
+
+def test_openrouter_model_combo_defaults_to_settings_value(view: SettingsView) -> None:
+    assert view._openrouter_model_combo.currentText() == "nvidia/nemotron-3-super-120b-a12b:free"
+
+
+def test_committing_openrouter_model_combo_emits_openrouter_model_changed(
+    view: SettingsView, qtbot: object
+) -> None:
+    combo = view._openrouter_model_combo
+    combo.lineEdit().selectAll()
+    with qtbot.waitSignal(view.openrouter_model_changed, timeout=1000) as blocker:  # type: ignore[attr-defined]
+        qtbot.keyClicks(combo.lineEdit(), "some/other-model")  # type: ignore[attr-defined]
+        qtbot.keyClick(combo.lineEdit(), Qt.Key.Key_Return)  # type: ignore[attr-defined]
+
+    assert blocker.args == ["some/other-model"]
 
 
 def test_set_input_devices_populates_combo_with_system_default_first(view: SettingsView) -> None:

@@ -327,9 +327,17 @@ def main() -> int:
         window.settings_view.set_key_test_result(name, available, detail)
         window.settings_view.set_testing(name, False)
 
+    def _on_openrouter_model_changed(model: str) -> None:
+        settings.provider.openrouter_model = model
+        save_settings(settings, data_dir / "settings.json")
+        provider = _build_provider("openrouter", secrets, settings)
+        if provider is not None:
+            provider_manager.set_provider("openrouter", provider)
+
     window.settings_view.provider_selected.connect(_on_provider_selected)
     window.settings_view.key_changed.connect(_on_key_changed)
     window.settings_view.test_requested.connect(_on_test_requested)
+    window.settings_view.openrouter_model_changed.connect(_on_openrouter_model_changed)
 
     # `settings.voice` is the exact object `speech_service` was built with (same reference,
     # not a copy) — mutating it in place here is all `SpeechService` needs to pick the

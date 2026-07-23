@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from nova.agent.agent import Agent, AgentCancelled
+from nova.agent.agent import Agent, AgentCancelled, _looks_degenerate
 from nova.agent.planner import Planner
 from nova.agent.router import Router
 from nova.agent.state import ConversationState
@@ -32,6 +32,10 @@ def _reply(text: str) -> LLMResponse:
 def _tool_call_response(name: str = "mystery") -> LLMResponse:
     call = ToolCall(call_id="call_1", tool_name=name, arguments={})
     return LLMResponse(text=None, tool_calls=(call,), finish_reason="tool_calls", usage=_USAGE)
+
+
+def _degenerate_reply() -> LLMResponse:
+    return _reply("<unk><unk><unk><unk> garbled nonsense")
 
 
 def _make_agent(
@@ -188,6 +192,36 @@ def test_provider_unavailable_emits_error_and_apologizes(monkeypatch: pytest.Mon
     error_events = [e for e in events if e.stage == PipelineStage.ERROR]
     assert len(error_events) == 1
     assert error_events[0].payload == {"error_code": "provider_unavailable"}
+
+
+def test_looks_degenerate_flags_unk_spam_but_not_normal_text() -> None:
+    assert _looks_degenerate("<unk><unk><unk><unk> nonsense")
+    assert not _looks_degenerate("The weather in Lagos is sunny today.")
+    assert not _looks_degenerate(None)
+    assert not _looks_degenerate("")
+
+
+def test_degenerate_response_is_retried_and_the_clean_answer_wins() -> None:
+    provider = FakeProvider("fake", [_degenerate_reply(), _reply("clean answer")])
+    agent, events = _make_agent(provider)
+
+    reply = agent.handle(_user_input())
+
+    assert reply.text == "clean answer"
+    assert len(provider.calls) == 2
+    assert not any(e.stage == PipelineStage.ERROR for e in events)
+
+
+def test_degenerate_response_twice_apologizes_instead_of_showing_garbage() -> None:
+    provider = FakeProvider("fake", [_degenerate_reply(), _degenerate_reply()])
+    agent, events = _make_agent(provider)
+
+    reply = agent.handle(_user_input())
+
+    assert "garbled" in reply.text.lower()
+    error_events = [e for e in events if e.stage == PipelineStage.ERROR]
+    assert len(error_events) == 1
+    assert error_events[0].payload == {"error_code": "degenerate_response"}
 
 
 def test_cancel_flag_resets_at_the_start_of_each_new_request() -> None:

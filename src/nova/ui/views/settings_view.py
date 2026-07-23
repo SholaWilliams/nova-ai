@@ -161,6 +161,7 @@ class SettingsView(QWidget):
     test_requested = Signal(str)  # provider_name
     tts_enabled_changed = Signal(bool)
     voice_changed = Signal(str)
+    openrouter_model_changed = Signal(str)
     input_device_changed = Signal(object)  # int | None
     output_device_changed = Signal(object)  # int | None
     default_city_changed = Signal(str)
@@ -234,6 +235,16 @@ class SettingsView(QWidget):
             row.test_requested.connect(self.test_requested)
             self._key_rows[name] = row
             section_layout.addWidget(row)
+
+        model_row = QHBoxLayout()
+        model_row.addWidget(QLabel("OpenRouter model", section))
+        self._openrouter_model_combo = QComboBox(section)
+        self._openrouter_model_combo.setEditable(True)
+        self._openrouter_model_combo.addItem(settings.provider.openrouter_model)
+        self._openrouter_model_combo.setCurrentText(settings.provider.openrouter_model)
+        self._openrouter_model_combo.textActivated.connect(self.openrouter_model_changed)
+        model_row.addWidget(self._openrouter_model_combo, 1)
+        section_layout.addLayout(model_row)
 
         return section
 

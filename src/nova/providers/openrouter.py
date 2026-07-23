@@ -63,6 +63,11 @@ class OpenRouterProvider(LLMProvider):
             "messages": [to_openai_message(message) for message in messages],
             "temperature": opts.temperature,
             "max_tokens": opts.max_tokens,
+            # ⚠️ verify-at-implementation (2026-07-23, docs/10 §2.4): excludes the lowest-
+            # precision quantization tiers, which free-tier backend routing most often lands
+            # degenerate/garbled output on (observed: <unk>-spam). Re-check this tier list
+            # against OpenRouter's current docs if routing behavior changes.
+            "provider": {"quantizations": ["int8", "fp8", "fp16", "bf16", "fp32"]},
             # ponytail: if a chosen model reasons and leaks chain-of-thought like Groq's
             # gpt-oss-120b did (docs/10 TD-4), OpenRouter's own `reasoning: {"exclude": true}`
             # is the knob — add it here if/when a documented default model needs it. Nemotron

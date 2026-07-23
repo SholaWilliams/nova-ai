@@ -81,6 +81,23 @@ class TestInboundParsing:
 
         assert result.finish_reason == "length"
 
+    def test_request_pins_provider_routing_away_from_low_precision_quantizations(
+        self, provider: OpenRouterProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured: dict[str, object] = {}
+
+        def _fake_post(_url: str, json: dict[str, object], **_kw: object) -> httpx.Response:
+            captured.update(json)
+            return _load_response("simple_text")
+
+        monkeypatch.setattr(provider._client, "post", _fake_post)
+
+        provider.generate([ChatMessage(role="user", content="hi")], [], _OPTS)
+
+        quantizations = captured["provider"]["quantizations"]  # type: ignore[index]
+        assert "int4" not in quantizations
+        assert "fp16" in quantizations
+
 
 class TestErrorMapping:
     def test_401_maps_to_auth_error(
