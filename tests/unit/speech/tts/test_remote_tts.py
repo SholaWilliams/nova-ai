@@ -121,6 +121,26 @@ def test_speak_raises_speech_error_on_connection_failure() -> None:
     assert _FakePlayback.instances[0].closed is True
 
 
+def test_on_start_fires_once_the_wav_header_is_parsed_and_playback_is_open() -> None:
+    header = _wav_header(24000)
+    engine = _engine(_streaming_handler([header + b"\x01\x02", b"\x03\x04"]))
+    calls: list[tuple[int, int, int | None] | None] = []
+
+    def on_start() -> None:
+        calls.append(_FakePlayback.instances[0].opened)
+
+    engine.speak("hello", voice="alba", device=None, should_stop=lambda: False, on_start=on_start)
+
+    assert calls == [(24000, 1, None)]  # playback was already open when on_start fired
+
+
+def test_on_start_is_optional() -> None:
+    header = _wav_header(24000)
+    engine = _engine(_streaming_handler([header + b"\x01\x02"]))
+
+    engine.speak("hello", voice="alba", device=None, should_stop=lambda: False)  # must not raise
+
+
 def test_should_stop_halts_streaming_partway_through() -> None:
     header = _wav_header(24000)
     pcm1, pcm2, pcm3 = b"\x01\x02", b"\x03\x04", b"\x05\x06"

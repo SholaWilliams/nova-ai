@@ -24,7 +24,12 @@ _CANT_SPEAK_TEXT = "I can't speak right now, but here's my answer."
 
 class Pyttsx3Engine(TTSEngine):
     def speak(
-        self, text: str, voice: str, device: int | None, should_stop: Callable[[], bool]
+        self,
+        text: str,
+        voice: str,
+        device: int | None,
+        should_stop: Callable[[], bool],
+        on_start: Callable[[], None] | None = None,
     ) -> None:
         del voice, device  # not applicable to SAPI5 (see module docstring)
         try:
@@ -37,6 +42,8 @@ class Pyttsx3Engine(TTSEngine):
         try:
             engine.say(text)
             engine.startLoop(False)
+            if on_start is not None:
+                on_start()
             try:
                 while engine.isBusy():
                     if should_stop():

@@ -68,6 +68,7 @@ class SpeechService:
         voice_settings: VoiceSettings,
         on_listening_level: Callable[[float], None] | None = None,
         on_tts_mode_changed: Callable[[str], None] | None = None,
+        on_speech_started: Callable[[str], None] | None = None,
     ) -> None:
         self._stt_engine = stt_engine
         self._primary_tts = primary_tts
@@ -78,6 +79,7 @@ class SpeechService:
         self._voice_settings = voice_settings
         self._on_listening_level = on_listening_level
         self._on_tts_mode_changed = on_tts_mode_changed
+        self._on_speech_started = on_speech_started
 
         self._cancel_requested = False
         self._end_requested = False
@@ -96,6 +98,9 @@ class SpeechService:
 
     def set_tts_mode_callback(self, callback: Callable[[str], None] | None) -> None:
         self._on_tts_mode_changed = callback
+
+    def set_speech_started_callback(self, callback: Callable[[str], None] | None) -> None:
+        self._on_speech_started = callback
 
     # ── warm-up (not part of the frozen contract — see module docstring) ───
 
@@ -235,26 +240,42 @@ class SpeechService:
 
     def speak(self, reply: AssistantReply) -> None:
         request_id = reply.request_id
+        revealed = False
+
+        def reveal() -> None:
+            """Fires the chat bubble's text reveal exactly once — on real audio start where
+            possible, or as a fallback at whichever point `speak()` ends up returning from,
+            so an interrupted/skipped/failed reply's text is never permanently swallowed
+            (FR-9: spoken text is always simultaneously visible)."""
+            nonlocal revealed
+            if revealed:
+                return
+            revealed = True
+            if self._on_speech_started is not None:
+                self._on_speech_started(request_id)
+
         if not self._voice_settings.tts_enabled:
             self._emit(request_id, PipelineStage.SPEAKING, EventStatus.SKIPPED, "Voice is off")
+            reveal()
             return
 
         text = _strip_for_speech(reply.spoken_text)
         if not text:
             self._emit(request_id, PipelineStage.SPEAKING, EventStatus.SKIPPED, "Nothing to say")
+            reveal()
             return
 
         self._stop_requested = False
         self._emit(request_id, PipelineStage.SPEAKING, EventStatus.STARTED, "Speaking")
 
         try:
-            self._speak_with(self._primary_tts, text)
+            self._speak_with(self._primary_tts, text, reveal)
         except SpeechError:
             logger.warning("primary TTS failed, falling back to pyttsx3", exc_info=True)
             if self._on_tts_mode_changed is not None:
                 self._on_tts_mode_changed("offline")
             try:
-                self._speak_with(self._fallback_tts, text)
+                self._speak_with(self._fallback_tts, text, reveal)
             except SpeechError:
                 self._emit(
                     request_id,
@@ -263,11 +284,13 @@ class SpeechService:
                     "I can't speak right now, but here's my answer.",
                     {"error_code": _TTS_FAILED_ERROR_CODE},
                 )
+                reveal()
                 return
 
+        reveal()
         self._emit(request_id, PipelineStage.SPEAKING, EventStatus.COMPLETED, "Finished speaking")
 
-    def _speak_with(self, engine: TTSEngine, text: str) -> None:
+    def _speak_with(self, engine: TTSEngine, text: str, on_start: Callable[[], None]) -> None:
         self._active_engine = engine
         try:
             engine.speak(
@@ -275,6 +298,7 @@ class SpeechService:
                 self._voice_settings.voice,
                 self._voice_settings.output_device,
                 should_stop=lambda: self._stop_requested,
+                on_start=on_start,
             )
         finally:
             self._active_engine = None

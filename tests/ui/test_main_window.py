@@ -153,15 +153,35 @@ def test_double_submit_guard_ignores_a_second_send_while_awaiting_reply(
     assert window._chat_view.bubble_count() == 1  # the second send was ignored
 
 
-def test_on_reply_ready_adds_nova_bubble_and_re_enables_input(window: MainWindow) -> None:
+def test_on_reply_ready_re_enables_input_but_holds_the_bubble_until_speech_starts(
+    window: MainWindow,
+) -> None:
+    """docs/05 §9: "text reveals with the TTS start" — input must re-enable right away, but
+    the bubble itself waits for `on_speech_started`, not `on_reply_ready` alone."""
     window._entry.setText("hi")
     window._send_button.click()
 
     window.on_reply_ready(AssistantReply(request_id="req_1", text="hello!", spoken_text="hello!"))
 
-    assert window._chat_view.bubble_count() == 2
+    assert window._chat_view.bubble_count() == 1  # just the user's own message so far
     assert window._entry.isEnabled()
     assert window._send_button.isEnabled()
+
+    window.on_speech_started("req_1")
+
+    assert window._chat_view.bubble_count() == 2
+
+
+def test_on_speech_started_with_a_mismatched_request_id_does_not_reveal(
+    window: MainWindow,
+) -> None:
+    window._entry.setText("hi")
+    window._send_button.click()
+    window.on_reply_ready(AssistantReply(request_id="req_1", text="hello!", spoken_text="hello!"))
+
+    window.on_speech_started("some_other_request")
+
+    assert window._chat_view.bubble_count() == 1  # still withheld
 
 
 def test_on_request_failed_adds_friendly_message_and_re_enables_input(window: MainWindow) -> None:
@@ -429,10 +449,27 @@ def test_new_conversation_clears_chat_and_emits_signal(window: MainWindow, qtbot
     window._entry.setText("hi")
     window._send_button.click()
     window.on_reply_ready(AssistantReply(request_id="req_1", text="hello!", spoken_text="hello!"))
+    window.on_speech_started("req_1")
     assert window._chat_view.bubble_count() == 2
 
     with qtbot.waitSignal(window.new_conversation_requested, timeout=1000):  # type: ignore[attr-defined]
         window._on_new_conversation_clicked()
+
+    assert window._chat_view.bubble_count() == 0
+
+
+def test_new_conversation_discards_a_reply_still_pending_speech(
+    window: MainWindow, qtbot: object
+) -> None:
+    """A reply that arrived but whose bubble hasn't been revealed yet (speech still hasn't
+    started) must not resurrect itself after the chat is cleared."""
+    window._entry.setText("hi")
+    window._send_button.click()
+    window.on_reply_ready(AssistantReply(request_id="req_1", text="hello!", spoken_text="hello!"))
+
+    with qtbot.waitSignal(window.new_conversation_requested, timeout=1000):  # type: ignore[attr-defined]
+        window._on_new_conversation_clicked()
+    window.on_speech_started("req_1")
 
     assert window._chat_view.bubble_count() == 0
 

@@ -58,7 +58,12 @@ class RemoteTTSEngine(TTSEngine):
             raise SpeechError(f"takada-tts-service health check failed: {exc}") from exc
 
     def speak(
-        self, text: str, voice: str, device: int | None, should_stop: Callable[[], bool]
+        self,
+        text: str,
+        voice: str,
+        device: int | None,
+        should_stop: Callable[[], bool],
+        on_start: Callable[[], None] | None = None,
     ) -> None:
         payload = {
             "tenant_id": self._tenant_id,
@@ -91,6 +96,8 @@ class RemoteTTSEngine(TTSEngine):
                         sample_rate = struct.unpack_from("<I", header, _SAMPLE_RATE_OFFSET)[0]
                         playback.open(sample_rate, 1, device)
                         opened = True
+                        if on_start is not None:
+                            on_start()
                         pcm = bytes(header[_WAV_HEADER_SIZE:])
                         if pcm:
                             playback.write(pcm)

@@ -68,17 +68,25 @@ class _FakeSTT:
 
 
 class _FakeTTS:
-    def __init__(self, raise_error: SpeechError | None = None) -> None:
+    def __init__(self, raise_error: SpeechError | None = None, calls_on_start: bool = True) -> None:
         self._raise_error = raise_error
+        self._calls_on_start = calls_on_start
         self.spoken: list[str] = []
         self.abort_called = False
 
     def speak(
-        self, text: str, voice: str, device: int | None, should_stop: Callable[[], bool]
+        self,
+        text: str,
+        voice: str,
+        device: int | None,
+        should_stop: Callable[[], bool],
+        on_start: Callable[[], None] | None = None,
     ) -> None:
         del voice, device, should_stop
         if self._raise_error is not None:
             raise self._raise_error
+        if self._calls_on_start and on_start is not None:
+            on_start()
         self.spoken.append(text)
 
     def abort(self) -> None:
@@ -92,6 +100,7 @@ def _service(
     fallback_tts: object | None = None,
     capture_factory: Callable[[], object] | None = None,
     voice_settings: VoiceSettings | None = None,
+    on_speech_started: Callable[[str], None] | None = None,
 ) -> tuple[SpeechService, list[PipelineEvent]]:
     """Build a `SpeechService` with fakes wired in. Callers that exercise `listen()` must
     still monkeypatch `service_module.VadEndpointer` themselves — VAD scripting varies too
@@ -107,6 +116,7 @@ def _service(
         bus=bus,
         vad_settings=VadSettings(),
         voice_settings=voice_settings or VoiceSettings(),
+        on_speech_started=on_speech_started,
     )
     return service, events
 
@@ -302,10 +312,12 @@ class TestSpeak:
     def test_muted_skips_without_calling_either_engine(self) -> None:
         primary = _FakeTTS()
         fallback = _FakeTTS()
+        started: list[str] = []
         service, events = _service(
             primary_tts=primary,
             fallback_tts=fallback,
             voice_settings=VoiceSettings(tts_enabled=False),
+            on_speech_started=started.append,
         )
 
         service.speak(AssistantReply(request_id="req_1", text="hi", spoken_text="hi"))
@@ -315,10 +327,13 @@ class TestSpeak:
         assert [(e.stage, e.status) for e in events] == [
             (PipelineStage.SPEAKING, EventStatus.SKIPPED)
         ]
+        # text must still be revealed even though nothing was ever spoken (FR-9)
+        assert started == ["req_1"]
 
     def test_empty_spoken_text_skips(self) -> None:
         primary = _FakeTTS()
-        service, events = _service(primary_tts=primary)
+        started: list[str] = []
+        service, events = _service(primary_tts=primary, on_speech_started=started.append)
 
         service.speak(AssistantReply(request_id="req_1", text="hi", spoken_text="   "))
 
@@ -326,11 +341,15 @@ class TestSpeak:
         assert [(e.stage, e.status) for e in events] == [
             (PipelineStage.SPEAKING, EventStatus.SKIPPED)
         ]
+        assert started == ["req_1"]
 
     def test_happy_path_uses_primary_engine(self) -> None:
         primary = _FakeTTS()
         fallback = _FakeTTS()
-        service, events = _service(primary_tts=primary, fallback_tts=fallback)
+        started: list[str] = []
+        service, events = _service(
+            primary_tts=primary, fallback_tts=fallback, on_speech_started=started.append
+        )
 
         service.speak(AssistantReply(request_id="req_1", text="hi", spoken_text="Hello there!"))
 
@@ -340,11 +359,28 @@ class TestSpeak:
             (PipelineStage.SPEAKING, EventStatus.STARTED),
             (PipelineStage.SPEAKING, EventStatus.COMPLETED),
         ]
+        # revealed exactly once, driven by the engine's own on_start callback
+        assert started == ["req_1"]
+
+    def test_reveal_is_not_duplicated_if_the_engine_calls_on_start_and_then_completes(
+        self,
+    ) -> None:
+        """`reveal()` must be idempotent — engines call `on_start` themselves, and `speak()`
+        also calls it defensively at every return path, so a well-behaved engine must not
+        cause the text to be revealed (or the reply text handed over) twice."""
+        primary = _FakeTTS()
+        started: list[str] = []
+        service, _events = _service(primary_tts=primary, on_speech_started=started.append)
+
+        service.speak(AssistantReply(request_id="req_1", text="hi", spoken_text="hi there"))
+
+        assert started == ["req_1"]
 
     def test_primary_failure_falls_back_and_notifies_mode_change(self) -> None:
         primary = _FakeTTS(raise_error=SpeechError("pocket-tts down"))
         fallback = _FakeTTS()
         modes: list[str] = []
+        started: list[str] = []
         bus = EventBus()
         events: list[PipelineEvent] = []
         bus.subscribe(events.append)
@@ -357,6 +393,7 @@ class TestSpeak:
             vad_settings=VadSettings(),
             voice_settings=VoiceSettings(),
             on_tts_mode_changed=modes.append,
+            on_speech_started=started.append,
         )
 
         service.speak(AssistantReply(request_id="req_1", text="hi", spoken_text="hi there"))
@@ -367,11 +404,16 @@ class TestSpeak:
             (PipelineStage.SPEAKING, EventStatus.STARTED),
             (PipelineStage.SPEAKING, EventStatus.COMPLETED),
         ]
+        # revealed once audio actually starts on the fallback engine, not the failed primary
+        assert started == ["req_1"]
 
     def test_both_engines_fail_emits_failed_but_never_raises(self) -> None:
         primary = _FakeTTS(raise_error=SpeechError("pocket-tts down"))
         fallback = _FakeTTS(raise_error=SpeechError("pyttsx3 down"))
-        service, events = _service(primary_tts=primary, fallback_tts=fallback)
+        started: list[str] = []
+        service, events = _service(
+            primary_tts=primary, fallback_tts=fallback, on_speech_started=started.append
+        )
 
         service.speak(AssistantReply(request_id="req_1", text="hi", spoken_text="hi there"))
 
@@ -379,12 +421,14 @@ class TestSpeak:
             (PipelineStage.SPEAKING, EventStatus.STARTED),
             (PipelineStage.SPEAKING, EventStatus.FAILED),
         ]
+        # text must never be permanently withheld, even when TTS fails entirely (FR-9)
+        assert started == ["req_1"]
 
     def test_stop_speaking_calls_abort_on_the_active_engine(self) -> None:
         primary = _FakeTTS()
 
-        def speak_and_stop(text, voice, device, should_stop):  # noqa: ANN001
-            del text, voice, device, should_stop
+        def speak_and_stop(text, voice, device, should_stop, on_start=None):  # noqa: ANN001
+            del text, voice, device, should_stop, on_start
             service.stop_speaking()
 
         primary.speak = speak_and_stop  # type: ignore[method-assign]

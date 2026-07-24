@@ -20,10 +20,21 @@ class TTSEngine(ABC):
 
     @abstractmethod
     def speak(
-        self, text: str, voice: str, device: int | None, should_stop: Callable[[], bool]
+        self,
+        text: str,
+        voice: str,
+        device: int | None,
+        should_stop: Callable[[], bool],
+        on_start: Callable[[], None] | None = None,
     ) -> None:
         """`should_stop` is polled between chunks/iterations so playback can be interrupted
-        (FR-13, cooperative half) — see `abort()` below for the hard-stop half."""
+        (FR-13, cooperative half) — see `abort()` below for the hard-stop half.
+
+        `on_start`, if given, fires once audio has actually begun playing (not merely
+        requested) — `SpeechService` uses it to gate the chat bubble's text reveal on real
+        audio (docs/05 §9: "text reveals with the TTS start"), not on the reply merely
+        arriving from the agent.
+        """
         raise NotImplementedError
 
     def abort(self) -> None:

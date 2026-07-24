@@ -50,6 +50,8 @@
 
 **Contract additions (docs/11 §4, M4, additive):** `SpeechService.end_listening()` — re-press-mic (stop capturing now, transcribe whatever's buffered) alongside the existing `cancel_listening()` (Esc: discard, no STT) — one boolean flag can't honestly serve both outcomes, since Esc must *always* discard regardless of how much speech was captured. A `tts_mode_changed(str)` notification ("primary" | "offline") drives the status-cluster indicator above.
 
+**Contract addition (docs/11 §4, bugfix, additive):** the chat bubble's text reveal is gated on TTS actually starting, not on the reply merely arriving from the agent — implementing the "text reveals with the TTS start" line in docs/05 §9 literally, which the original wiring (`AgentWorker.reply_ready` → `MainWindow.on_reply_ready` showing the bubble immediately, independent of `SpeechService.speak()`) never actually enforced. `TTSEngine.speak()` takes an optional `on_start` callback, called once real audio playback begins (`RemoteTTSEngine`: right after `AudioPlayback.open()`; `Pyttsx3Engine`: right after `startLoop()`). `SpeechService.speak()` wraps this in a `reveal()` closure fired exactly once per call — via `on_start` on real audio, or defensively at every other return path (voice off, nothing to say, both engines failed) — so the text is never permanently withheld even when nothing is ever spoken (FR-9). Exposed as `SpeechOutWorker.speech_started(str request_id)`, which `MainWindow` uses to release a reply held since `on_reply_ready`.
+
 ## 5. Audio Cues & Device Management
 
 - **Cues** (`assets/sounds/`): listen-start (rising two-tone, 200 ms), listen-end (falling, 150 ms), error (soft thud). Cues ≤ -12 dBFS; disabled with reduced-motion? No — separate "sound effects" toggle.
@@ -83,5 +85,6 @@
 | 1.0.0 | 2026-07-08 | Initial version for Phase 8 review. |
 | 1.1.0 | 2026-07-10 | M4, owner direction: primary TTS swapped `edge-tts` → `pocket-tts` (docs/04 TD-6); default voice, warm-up-at-startup rationale, and revised interruption/error-matrix wording updated to match; `end_listening()`/`tts_mode_changed` contract additions recorded (docs/11 §4). |
 | 1.2.0 | 2026-07-23 | M9 (Stream A), owner direction: primary TTS moved from in-process `pocket-tts` to `takada-tts-service` over HTTP (docs/04 TD-6) — `RemoteTTSEngine` parses a streamed WAV response instead of consuming `generate_audio_stream()` tensors directly; `warm_up_tts()` now health-checks the remote service instead of loading a local model. `pyttsx3` fallback and voice catalog unchanged. |
+| 1.2.1 | 2026-07-24 | Bugfix: chat bubble text now waits for `speech_started` (real audio start) instead of revealing immediately on `reply_ready`, correctly implementing the existing docs/05 §9 "text reveals with the TTS start" line. |
 
 **Exit check:** listen/speak flows fully deterministic with timeouts everywhere; every failure lands conversationally; nothing listens without a visible indicator (now or in the wake-word future).
