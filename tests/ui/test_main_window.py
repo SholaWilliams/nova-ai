@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import QApplication, QSystemTrayIcon
 
 from nova.core.config import Settings
 from nova.core.events import EventBus, PipelineStage
@@ -547,6 +548,102 @@ def test_back_to_today_returns_to_home_page(window: MainWindow) -> None:
 
     assert window._stack.currentIndex() == 0
     assert not window._input_bar.isHidden()
+
+
+# ── system tray (M10, docs/05 §6.7) ─────────────────────────────────
+
+
+def test_tray_wake_action_reflects_settings_default_off(window: MainWindow) -> None:
+    assert window._tray_wake_action.isChecked() is False
+
+
+def test_tray_wake_action_defaults_to_settings_enabled_value(qtbot: object) -> None:
+    settings = Settings()
+    settings.wake.enabled = True
+    widget = MainWindow(EventBus(), settings)
+    qtbot.addWidget(widget)  # type: ignore[attr-defined]
+
+    assert widget._tray_wake_action.isChecked() is True
+    assert widget._tray_icon.toolTip() == "NOVA — clap to wake"
+
+
+def test_set_wake_indicator_updates_tray_tooltip_and_action(window: MainWindow) -> None:
+    window.set_wake_indicator(True)
+
+    assert window._tray_icon.toolTip() == "NOVA — clap to wake"
+    assert window._tray_wake_action.isChecked() is True
+
+
+def test_set_wake_indicator_syncs_settings_checkbox_without_reemitting(
+    window: MainWindow,
+) -> None:
+    received: list[bool] = []
+    window.settings_view.wake_enabled_changed.connect(received.append)
+
+    window.set_wake_indicator(True)
+
+    assert window.settings_view._wake_enabled_checkbox.isChecked() is True
+    assert received == []  # blockSignals-guarded -- must not re-trigger the Settings signal
+
+
+def test_toggling_tray_wake_action_emits_tray_wake_toggled(
+    window: MainWindow, qtbot: object
+) -> None:
+    with qtbot.waitSignal(window.tray_wake_toggled, timeout=1000) as blocker:  # type: ignore[attr-defined]
+        window._tray_wake_action.trigger()
+
+    assert blocker.args == [True]
+
+
+def test_tray_activated_trigger_restores_the_window(window: MainWindow) -> None:
+    window.hide()
+
+    window._on_tray_activated(QSystemTrayIcon.ActivationReason.Trigger)
+
+    assert not window.isHidden()
+
+
+def test_tray_activated_context_menu_does_not_restore(window: MainWindow) -> None:
+    window.hide()
+
+    window._on_tray_activated(QSystemTrayIcon.ActivationReason.Context)
+
+    assert window.isHidden()
+
+
+def test_close_event_hides_instead_of_closing_when_tray_is_visible(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(window._tray_icon, "isVisible", lambda: True)
+
+    window.close()
+
+    assert window.isHidden()
+
+
+def test_close_event_closes_normally_when_tray_is_not_available(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(window._tray_icon, "isVisible", lambda: False)
+
+    closed = window.close()
+
+    assert closed is True
+
+
+def test_quit_from_tray_calls_application_quit(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Patches `quit` on the real running QApplication instance rather than replacing
+    # `QApplication.instance` itself -- pytest-qt's own teardown hook calls
+    # `QApplication.instance().processEvents()` between tests, so swapping the classmethod
+    # (even monkeypatched) leaks into that machinery and breaks later tests.
+    quit_calls = []
+    monkeypatch.setattr(QApplication.instance(), "quit", lambda: quit_calls.append(True))
+
+    window._quit_from_tray()
+
+    assert quit_calls == [True]
 
 
 class TestConfirmationGateWiring:

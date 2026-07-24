@@ -13,8 +13,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QAction, QCloseEvent, QColor, QIcon, QKeyEvent, QPainter, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QDockWidget,
     QHBoxLayout,
     QLabel,
@@ -22,9 +23,11 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QPushButton,
     QSplitter,
     QStackedWidget,
+    QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
 )
@@ -75,6 +78,9 @@ _STATUS_COLOR_FOR_MODE = {
     "fallback": Color.STATE_WARNING,
     "down": Color.STATE_ERROR,
 }
+_TRAY_TOOLTIP_OFF = "NOVA"
+_TRAY_TOOLTIP_ON = "NOVA — clap to wake"
+_TRAY_HIDE_HINT = "NOVA's still running — right-click the tray icon to quit."
 
 
 class MainWindow(QMainWindow):
@@ -91,6 +97,7 @@ class MainWindow(QMainWindow):
     clear_facts_requested = Signal()  # M5
     session_selected = Signal(str)  # session id (FR-5/6, M5)
     new_conversation_requested = Signal()  # M5
+    tray_wake_toggled = Signal(bool)  # M10 — tray context menu's "Clap to wake" item
 
     def __init__(self, bus: EventBus, settings: Settings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -144,6 +151,14 @@ class MainWindow(QMainWindow):
         self._confirm_dialog: ConfirmDialog | None = None
         # EventBus delivers on the main thread (queued) — safe to open a modal from here.
         bus.event_published.connect(self._on_pipeline_event)
+
+        # M10 (docs/05 §6.7): tray icon only actually shown where the platform supports one
+        # (not under offscreen/headless) -- closeEvent checks isVisible(), so a window never
+        # gets stranded hidden with no tray to reopen it from.
+        self._shown_tray_hint = False
+        self._tray_icon = self._build_tray_icon()
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            self._tray_icon.show()
 
     # ── confirmation gate (docs/05 §6.6) ───────────────────────────────
 
@@ -533,3 +548,82 @@ class MainWindow(QMainWindow):
                 self.cancel_requested.emit()
                 return
         super().keyPressEvent(event)
+
+    # ── system tray (M10, docs/05 §6.7) ─────────────────────────────────
+
+    def _build_tray_icon(self) -> QSystemTrayIcon:
+        """No app icon asset exists yet (nova.spec's `nova.ico` is still a placeholder,
+        docs/14 §5) -- draws the same cyan dot the header logo uses rather than adding a new
+        binary asset for this milestone."""
+        pixmap = QPixmap(32, 32)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(QColor(theme.accent_hex("cyan")))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(4, 4, 24, 24)
+        painter.end()
+
+        tray = QSystemTrayIcon(QIcon(pixmap), self)
+        tray.setToolTip(_TRAY_TOOLTIP_ON if self._settings.wake.enabled else _TRAY_TOOLTIP_OFF)
+        tray.activated.connect(self._on_tray_activated)
+
+        menu = QMenu(self)
+        open_action = QAction("Open NOVA", self)
+        open_action.triggered.connect(self._restore_from_tray)
+        menu.addAction(open_action)
+
+        self._tray_wake_action = QAction("Clap to wake", self)
+        self._tray_wake_action.setCheckable(True)
+        self._tray_wake_action.setChecked(self._settings.wake.enabled)
+        self._tray_wake_action.toggled.connect(self.tray_wake_toggled)
+        menu.addAction(self._tray_wake_action)
+
+        menu.addSeparator()
+        quit_action = QAction("Quit", self)
+        quit_action.triggered.connect(self._quit_from_tray)
+        menu.addAction(quit_action)
+
+        tray.setContextMenu(menu)
+        return tray
+
+    def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:  # left-click
+            self._restore_from_tray()
+
+    def _restore_from_tray(self) -> None:
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _quit_from_tray(self) -> None:
+        # Bypasses closeEvent's hide-to-tray branch entirely -- QApplication.quit() ends the
+        # event loop directly without invoking closeEvent, unlike clicking the window's own X.
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+
+    def set_wake_indicator(self, enabled: bool) -> None:
+        """`app.py`'s wiring surface: keeps the tray tooltip/checkbox and the Settings
+        checkbox in sync regardless of which one the user actually toggled."""
+        self._tray_icon.setToolTip(_TRAY_TOOLTIP_ON if enabled else _TRAY_TOOLTIP_OFF)
+        self._tray_wake_action.blockSignals(True)
+        self._tray_wake_action.setChecked(enabled)
+        self._tray_wake_action.blockSignals(False)
+        self._settings_view.set_wake_enabled(enabled)
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override
+        """Close-to-tray (docs/05 §6.7): the X button hides rather than exits when a tray
+        icon is actually available -- falls through to a real close otherwise (no system
+        tray support, e.g. offscreen/headless), so the window is never strandable with no
+        way to reopen it."""
+        if self._tray_icon.isVisible():
+            event.ignore()
+            self.hide()
+            if not self._shown_tray_hint:
+                self._tray_icon.showMessage(
+                    "NOVA", _TRAY_HIDE_HINT, QSystemTrayIcon.MessageIcon.Information
+                )
+                self._shown_tray_hint = True
+            return
+        super().closeEvent(event)

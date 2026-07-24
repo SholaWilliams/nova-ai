@@ -419,6 +419,13 @@ class SettingsView(QWidget):
         else:
             self._banner.setVisible(False)
 
+    def set_wake_enabled(self, enabled: bool) -> None:
+        """`app.py`'s wiring surface (M10) — keeps this checkbox in sync when the tray
+        context menu's own "Clap to wake" item is the one that actually got toggled."""
+        self._wake_enabled_checkbox.blockSignals(True)
+        self._wake_enabled_checkbox.setChecked(enabled)
+        self._wake_enabled_checkbox.blockSignals(False)
+
     def set_input_devices(self, devices: list[AudioDeviceInfo]) -> None:
         """Called once at startup from `app.py` (FR-12) — `ui` can't enumerate devices
         itself (D-5: no `nova.speech` import), so `app.py` hands the list over."""

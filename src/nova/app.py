@@ -6,10 +6,11 @@ reasoning all live elsewhere — this module is wiring only.
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread
+from PySide6.QtCore import QSharedMemory, Qt, QThread
 from PySide6.QtWidgets import QApplication
 
 from nova.agent.agent import Agent
@@ -56,8 +57,13 @@ from nova.ui.animations import set_reduced_motion
 from nova.ui.main_window import MainWindow
 from nova.ui.theme import build_stylesheet
 
+logger = logging.getLogger(__name__)
+
 _OMNIROUTE_ENV_KEY_NAME = "NOVA_OMNIROUTE_API_KEY"
 _NO_STT_KEY_MESSAGE = "I can't hear right now — you can type to me!"
+# M10: arbitrary-but-fixed key for the single-instance guard (docs/08 §7a) -- namespaced so
+# it can't collide with an unrelated app's shared-memory segment of the same generic name.
+_SINGLE_INSTANCE_KEY = "NOVA-9f3c2b71-4a5d-4e8a-b6f1-single-instance-guard"
 
 
 class _NoKeySTTEngine(STTEngine):
@@ -123,6 +129,17 @@ def _build_speech_service(secrets: Secrets, settings: Settings, bus: EventBus) -
     )
 
 
+def _acquire_single_instance_lock() -> QSharedMemory | None:
+    """`None` means another NOVA process already holds the lock -- caller should exit without
+    building the rest of the app. Windows frees a `QSharedMemory` segment automatically when
+    its owning process exits, even on a crash (unlike the classic Unix stale-lockfile
+    problem), so there's no cleanup path to write here (docs/08 §7a residency)."""
+    lock = QSharedMemory(_SINGLE_INSTANCE_KEY)
+    if not lock.create(1):
+        return None
+    return lock
+
+
 def _show_first_run_if_needed(window: MainWindow, secrets: Secrets) -> None:
     """M6 T-603: if no API keys configured, show Settings on first run (docs/14 §2, FR-47).
 
@@ -147,6 +164,15 @@ def main() -> int:
     settings = load_settings(data_dir / "settings.json")
 
     app = QApplication(sys.argv)
+
+    # M10: tray residency means a second launch is a real scenario now (clap-to-wake, an
+    # autostart shortcut), not just an accidental double-click -- refuse silently rather than
+    # opening a second window competing for the same microphone (docs/08 §7a).
+    instance_lock = _acquire_single_instance_lock()
+    if instance_lock is None:
+        logger.info("NOVA is already running — exiting")
+        return 0
+
     app.setStyleSheet(build_stylesheet(settings.ui.accent))
     set_reduced_motion(settings.ui.reduced_motion)
 
@@ -363,12 +389,14 @@ def main() -> int:
         settings.wake.enabled = enabled
         save_settings(settings, data_dir / "settings.json")
         wake_worker.set_enabled(enabled)
+        window.set_wake_indicator(enabled)
 
     window.settings_view.tts_enabled_changed.connect(_on_tts_enabled_changed)
     window.settings_view.voice_changed.connect(_on_voice_changed)
     window.settings_view.input_device_changed.connect(_on_input_device_changed)
     window.settings_view.output_device_changed.connect(_on_output_device_changed)
     window.settings_view.wake_enabled_changed.connect(_on_wake_enabled_changed)
+    window.tray_wake_toggled.connect(_on_wake_enabled_changed)
     window.settings_view.set_input_devices(list_input_devices())
     window.settings_view.set_output_devices(list_output_devices())
 
