@@ -1,6 +1,7 @@
 """Unit tests for nova.core.config — Settings load/save and Secrets precedence (docs/11 §5)."""
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from nova.core.config import (
     get_data_dir,
     load_settings,
     save_settings,
+    set_autostart,
     write_secret_to_env,
 )
 
@@ -152,6 +154,67 @@ def test_load_settings_invalid_wake_section_reverts_to_defaults(tmp_path: Path) 
     settings = load_settings(path)
 
     assert settings.wake.sensitivity == 3.0  # reverted to default
+
+
+# ── set_autostart (M10, docs/08 §7a) ─────────────────────────────────
+
+_STARTUP_SUBPATH = Path("Microsoft") / "Windows" / "Start Menu" / "Programs" / "Startup"
+
+
+def test_set_autostart_true_writes_a_launcher_batch_file(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+
+    set_autostart(True)
+
+    shortcut = tmp_path / _STARTUP_SUBPATH / "NOVA.bat"
+    assert shortcut.is_file()
+    assert "python" in shortcut.read_text(encoding="utf-8").lower()
+
+
+def test_set_autostart_false_removes_the_batch_file(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    set_autostart(True)
+    shortcut = tmp_path / _STARTUP_SUBPATH / "NOVA.bat"
+    assert shortcut.is_file()
+
+    set_autostart(False)
+
+    assert not shortcut.exists()
+
+
+def test_set_autostart_false_without_an_existing_file_does_not_raise(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+
+    set_autostart(False)  # must not raise
+
+
+def test_set_autostart_frozen_build_launches_the_exe_directly(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+
+    set_autostart(True)
+
+    shortcut = tmp_path / _STARTUP_SUBPATH / "NOVA.bat"
+    assert "-m nova" not in shortcut.read_text(encoding="utf-8")
+
+
+def test_set_autostart_swallows_oserror(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise OSError("permission denied")
+
+    monkeypatch.setattr("nova.core.config.atomic_write_text", _boom)
+
+    set_autostart(True)  # must not raise
 
 
 # ── Settings: unknown-field preservation (forward compatibility) ────

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Any, Literal
 
@@ -37,6 +38,40 @@ def get_data_dir() -> Path:
     if appdata:
         return Path(appdata) / "NOVA"
     return Path.home() / ".nova"
+
+
+def _startup_folder() -> Path:
+    """Windows' per-user Startup folder — anything placed here (.exe/.bat/.vbs/.lnk/.url)
+    launches automatically at login, no admin rights, no registry."""
+    appdata = os.environ.get("APPDATA")
+    base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
+    return base / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+
+
+_AUTOSTART_FILENAME = "NOVA.bat"
+
+
+def set_autostart(enabled: bool) -> None:
+    """Writes/removes a launcher batch file in the Windows Startup folder (M10, docs/08 §7a
+    — the wake listener needs the process already running to be near-instant). Deliberately
+    not a real `.lnk` shortcut: that needs `pywin32`'s COM automation, a new dependency
+    docs/04 hasn't accepted, when a Startup-folder `.bat` does the same job with pure stdlib.
+    A frozen (PyInstaller) build re-launches its own packaged exe directly; a dev venv
+    re-launches via `python -m nova`. Best-effort: a permission error here shouldn't crash a
+    Settings toggle, just leave autostart un-set."""
+    path = _startup_folder() / _AUTOSTART_FILENAME
+    try:
+        if not enabled:
+            path.unlink(missing_ok=True)
+            return
+        command = (
+            f'start "" "{sys.executable}"'
+            if getattr(sys, "frozen", False)
+            else f'start "" "{sys.executable}" -m nova'
+        )
+        atomic_write_text(path, f"@echo off\r\n{command}\r\n", tmp_prefix=".nova_autostart.")
+    except OSError as exc:
+        logger.warning("couldn't update autostart shortcut at %s: %s", path, exc)
 
 
 class Secrets(BaseSettings):

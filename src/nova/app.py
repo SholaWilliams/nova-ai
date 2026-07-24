@@ -26,6 +26,7 @@ from nova.core.config import (
     get_data_dir,
     load_settings,
     save_settings,
+    set_autostart,
     write_secret_to_env,
 )
 from nova.core.errors import SpeechError, install_excepthook
@@ -391,11 +392,17 @@ def main() -> int:
         wake_worker.set_enabled(enabled)
         window.set_wake_indicator(enabled)
 
+    def _on_autostart_changed(enabled: bool) -> None:
+        settings.wake.autostart = enabled
+        save_settings(settings, data_dir / "settings.json")
+        set_autostart(enabled)
+
     window.settings_view.tts_enabled_changed.connect(_on_tts_enabled_changed)
     window.settings_view.voice_changed.connect(_on_voice_changed)
     window.settings_view.input_device_changed.connect(_on_input_device_changed)
     window.settings_view.output_device_changed.connect(_on_output_device_changed)
     window.settings_view.wake_enabled_changed.connect(_on_wake_enabled_changed)
+    window.settings_view.autostart_changed.connect(_on_autostart_changed)
     window.tray_wake_toggled.connect(_on_wake_enabled_changed)
     window.settings_view.set_input_devices(list_input_devices())
     window.settings_view.set_output_devices(list_output_devices())
