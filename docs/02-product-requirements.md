@@ -73,7 +73,8 @@ This PRD translates the Phase 1 vision into concrete, testable requirements. Eve
 | FR-11 | Listening start/stop is explicitly indicated (visual + audio cue). NOVA never listens without indication. | M |
 | FR-12 | The user can select input/output audio devices in Settings. | S |
 | FR-13 | The user can interrupt (stop) NOVA's speech playback. | S |
-| FR-14 | Wake-word activation ("Hey NOVA"). | W (post-1.0, spec in Phase 8) |
+| FR-14 | Voice-phrase wake word ("Hey NOVA"). | W (post-1.0, spec in Phase 8 §7 — M11 candidate) |
+| FR-14a | Clap-to-wake: a double clap raises the app and starts listening, same as pressing the mic. | S (M10, spec in Phase 8 §7) |
 
 ### 3.3 Agent Core (traces: G-2, EO-2, EO-3, EO-4)
 
@@ -303,6 +304,7 @@ Total indicative: **13–17 weeks** part-time to v1.0 + education materials.
 | Version | Date | Change |
 |---------|------|--------|
 | 1.0.0 | 2026-07-08 | Initial version for Phase 2 review. |
+| 1.1.0 | 2026-07-24 | M10, owner direction: FR-14 split — the always-on trigger is a clap (FR-14a, DSP-only, M10) rather than a voice phrase; voice-phrase wake word remains FR-14, deferred to M11 pending a new dependency (openWakeWord) and custom model training. |
 
 ---
 

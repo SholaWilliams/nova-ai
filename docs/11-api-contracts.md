@@ -222,6 +222,7 @@ class Agent:                                             # Phase 6
             "input_device": null, "output_device": null, "sound_effects": true},
  "weather": {"default_city": "Lagos"},
  "ui": {"accent": "cyan", "reduced_motion": false, "pipeline_visible": true},
+ "wake": {"enabled": false, "autostart": false, "sensitivity": 1.0},
  "advanced": {"max_iterations": 5, "tool_timeout_s": 15,
                "vad": {"aggressiveness": 2, "silence_ms": 800}}}
 ```
@@ -249,5 +250,6 @@ Unknown fields are preserved on rewrite (forward compatibility); invalid fields 
 | 1.2.0 | 2026-07-23 | M9 (Stream B): `ProviderSettings` shape replaced — `active`/`gemini_model`/`groq_model`/`openrouter_model` → `omniroute_base_url`/`omniroute_model` (docs/04 TD-4, sole-backend revision). |
 | 1.2.0 | 2026-07-23 | M9 (Stream A): additive `VoiceSettings` fields `tts_base_url`, `tts_tenant_id` (docs/04 TD-6 — `takada-tts-service` connection config). |
 | 1.2.1 | 2026-07-24 | Bugfix: additive `SpeechService` signal `speech_started(str request_id)` — gates the chat bubble's text reveal on real audio start (docs/08 §4, docs/05 §9). |
+| 1.3.0 | 2026-07-24 | M10: additive `WakeSettings` (`enabled`, `autostart`, `sensitivity`) — clap-to-wake toggle and its calibration knob, plus the autostart-on-login toggle (docs/08 §7a). No version bump — unknown/missing fields already default per §5's forward-compatibility rule. |
 
 **Exit check:** every cross-layer arrow in Phase 3 §2 has a typed contract here; all external data is validated at entry; wire formats are golden-testable.

@@ -68,9 +68,27 @@
 | Both TTS fail | text-only | reply displayed; speaker icon disabled with tooltip |
 | Playback device vanished | stop, re-enumerate | toast "Speaker changed — check Settings" |
 
-## 7. Wake Word (post-1.0 spec — FR-14 W)
+## 7. Wake Triggers
 
-**Engine:** openWakeWord (Apache-2.0, ONNX on CPU — fits no-GPU constraint). Custom "Hey NOVA" model trained from TTS-generated samples. **Design constraints when built:** always-listening loop must show a *persistent* visible indicator (extends FR-11 — never covert listening); wake-word detection runs fully locally (no audio leaves the machine until wake fires); toggle default **off**. Architecture is ready: it's a new front-edge producer that triggers the same `startListening()` path.
+### 7a. Clap-to-Wake (M10 — FR-14a)
+
+**Detector:** `ClapDetector` (`src/nova/speech/wake.py`) — pure DSP, no model, no new dependency. Runs over the same 30 ms/16 kHz int16 frames `AudioCapture` already produces (§2). A clap is a broadband transient: energy jumps far above the ambient floor in a single frame and decays back down within ~150 ms, unlike speech which sustains. Algorithm:
+
+1. Track an exponential-moving-average noise floor from non-transient frames (`floor = 0.95·floor + 0.05·rms`).
+2. A frame is a **transient** when `rms > floor × sensitivity` (⚠️ `sensitivity` — a ponytail calibration knob, not a hardcoded ratio — real microphones vary enough in gain/ambient noise that this will need a tuning pass against the owner's actual room, not just synthesized fixtures; lives in `WakeSettings`, no UI slider yet).
+3. A transient only confirms as a **clap** if RMS falls back below `floor × 1.5` within 5 frames (~150 ms) — this is what rejects sustained speech and door-slam-like reverb tails.
+4. Two confirmed claps **150–600 ms apart** ⇒ `wake_detected`. Single clap requirement was deliberately *not* used — a chair scrape or a dropped object is a single transient; requiring a rhythm is what keeps the false-positive rate usable outside a lab.
+5. A 2 s cooldown after firing prevents the wake action itself (window raise, chime) from re-triggering the detector.
+
+**`WakeWorker`** (`speech/worker.py`) owns a dedicated `AudioCapture` + `ClapDetector` on its own thread, independent of the push-to-talk `SpeechInWorker`. It **pauses** (stops its stream) while a request is actively being listened to or transcribed, and resumes once that cycle ends — this avoids two simultaneous `sd.InputStream` opens on the same device, a real Windows failure mode this codebase already hit once (§5, WDM-KS). `wake_detected` is wired the same way docs/08's original wake-word note anticipated: it's a new front-edge producer that triggers the same path `mic_pressed` does (`app.py`) — raise the window, then `SpeechInWorker.listen_request(device)`.
+
+**Design constraints (extends FR-11 — never covert listening):** the wake listener only runs while its Settings toggle is on (`WakeSettings.enabled`, default **off**); a running wake listener is indicated persistently by the tray icon's state/tooltip (§ residency, docs/05); it processes audio fully locally — nothing is sent anywhere, there's no model file, no network call, until a clap sequence fires and the normal listen→STT flow (which *does* call Groq) takes over.
+
+**Residency (M10):** near-instant wake requires the process already be running and warm — a cold PySide6 + audio-stack launch is seconds, not instant. NOVA becomes tray-resident: closing the window hides to tray instead of exiting (an explicit tray "Quit" is the real exit); a single-instance guard prevents a second process from opening when one is already resident; an optional Settings toggle writes a Windows Startup-folder shortcut so NOVA (and thus the wake listener) survives a reboot without the user launching it by hand. This is genuinely new surface for the app (no tray/residency existed before M10) — see docs/05 for the tray UX and docs/11 §5 for `WakeSettings`.
+
+### 7b. Voice-Phrase Wake Word (deferred — FR-14 W, M11 candidate)
+
+**Engine:** openWakeWord (Apache-2.0, ONNX on CPU — fits no-GPU constraint; a new dependency, needs a docs/04 decision when built). The shipped pretrained model set does not include "Hello NOVA" — a custom model would need training from TTS-generated samples. Deferred out of M10 because it doesn't fit in the same session as the residency work it depends on, and a wrong pretrained-vs-custom call shouldn't block shipping the clap trigger. Same design constraints apply when built: persistent visible indicator, fully local detection, toggle default off. It slots in as an alternative front-edge producer feeding the exact same `wake_detected` → `listen_request` path `ClapDetector` uses — no rearchitecture needed, just a second detector implementation behind `WakeWorker`.
 
 ## 8. Future Offline STT
 
@@ -86,5 +104,6 @@
 | 1.1.0 | 2026-07-10 | M4, owner direction: primary TTS swapped `edge-tts` → `pocket-tts` (docs/04 TD-6); default voice, warm-up-at-startup rationale, and revised interruption/error-matrix wording updated to match; `end_listening()`/`tts_mode_changed` contract additions recorded (docs/11 §4). |
 | 1.2.0 | 2026-07-23 | M9 (Stream A), owner direction: primary TTS moved from in-process `pocket-tts` to `takada-tts-service` over HTTP (docs/04 TD-6) — `RemoteTTSEngine` parses a streamed WAV response instead of consuming `generate_audio_stream()` tensors directly; `warm_up_tts()` now health-checks the remote service instead of loading a local model. `pyttsx3` fallback and voice catalog unchanged. |
 | 1.2.1 | 2026-07-24 | Bugfix: chat bubble text now waits for `speech_started` (real audio start) instead of revealing immediately on `reply_ready`, correctly implementing the existing docs/05 §9 "text reveals with the TTS start" line. |
+| 1.3.0 | 2026-07-24 | M10, owner direction: §7 rewritten — split into 7a Clap-to-Wake (built this milestone: DSP-only `ClapDetector`/`WakeWorker`, tray residency, zero new dependencies) and 7b Voice-Phrase Wake Word (the original spec, deferred to an M11 candidate pending the openWakeWord dependency decision and custom model training). |
 
 **Exit check:** listen/speak flows fully deterministic with timeouts everywhere; every failure lands conversationally; nothing listens without a visible indicator (now or in the wake-word future).

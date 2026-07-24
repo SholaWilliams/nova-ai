@@ -133,6 +133,10 @@ Right-side drawer listing sessions (date + first user message). Selecting loads 
 
 Modal, `shield-question` icon in accent, title "**May I?**", body = plain-language action preview (for Desktop Organizer: scrollable list of planned moves — FR-26), buttons **"Yes, do it"** (accent fill) / **"No, stop"** (ghost). Esc = No. The pipeline shows `AWAITING_CONFIRMATION` ("Asking your permission") while open.
 
+### 6.7 System Tray (M10, FR-14a)
+
+Closing the main window (✕) hides to tray instead of quitting — the app's own icon in the notification area, tooltip **"NOVA"** normally, **"NOVA — clap to wake"** when `WakeSettings.enabled` is on (the *persistent visible indicator* FR-11 requires for always-on listening — the icon itself, not a separate always-open window, since the window is exactly what's hidden). Left-click restores the window; right-click context menu: **Open NOVA**, **Clap to wake ✓/–** (mirrors the Settings toggle), **Quit** (the only real exit — confirms if a request is in flight). A clap sequence (§ docs/08 7a) restores the window and starts listening in one motion, same as pressing the mic. First time the window is hidden-to-tray rather than closed, a one-off toast explains it: "NOVA's still running — right-click the tray icon to quit."
+
 ---
 
 ## 7. Widget Specifications
@@ -212,5 +216,6 @@ Rules: max 2 concurrently animated properties per widget; no animation on layout
 | Version | Date | Change |
 |---------|------|--------|
 | 1.0.0 | 2026-07-08 | Initial version for Phase 5 review. |
+| 1.1.0 | 2026-07-24 | M10: added §6.7 System Tray — close-to-tray residency, tray icon as the persistent listening indicator (FR-11) for clap-to-wake (FR-14a, docs/08 §7a). |
 
 **Exit check:** palette/typography/motion tokens final enough to code `theme.py`; every FR-35…FR-45 requirement has a concrete visual answer; copy rules aligned with the educational objectives.

@@ -130,7 +130,18 @@ Assumes a solo developer, part-time (~10–12 h/week). One sprint = one week. Ef
 | T-905 | Stream B: app.py/config.py/settings_view.py wiring, delete gemini/groq/openrouter adapters, docs/04/10/11 sync | 4 | T-903, T-904 |
 | | **M9 subtotal** | **16** | |
 
-**Total: ~228 ideal hours ≈ 13–14 sprints at 10–12 h/week + M7 + M8 + M9 (all unplanned, post-M6).** Matches the PRD §8 envelope (13–17 weeks).
+### M10 — Clap to Wake
+| ID | Task | Est (h) | Depends |
+|----|------|--------|---------|
+| T-1001 | Docs: this entry + docs/08 §7 rewrite (FR-14 split) + docs/11 §5 `WakeSettings` schema + docs/05 tray/indicator UX | 2 | — |
+| T-1002 | `ClapDetector` (`speech/wake.py`): double-clap DSP transient detector over existing 30 ms capture frames + unit tests | 4 | T-401 |
+| T-1003 | `WakeWorker`: owns an `AudioCapture`, emits `wake_detected`, pauses during an active listen/speak cycle | 3 | T-1002 |
+| T-1004 | `WakeSettings` (additive, no version bump) + Settings toggle (default off, FR-11/§7) | 2 | T-1003 |
+| T-1005 | Tray icon (`QSystemTrayIcon`), close-to-tray, single-instance guard, `wake_detected` → raise + `mic_pressed` wiring | 5 | T-1004 |
+| T-1006 | Autostart-on-login Settings toggle — Windows Startup-folder shortcut, no registry/admin, default off | 2 | T-1005 |
+| | **M10 subtotal** | **18** | |
+
+**Total: ~246 ideal hours ≈ 13–14 sprints at 10–12 h/week + M7 + M8 + M9 + M10 (all unplanned, post-M6).** Matches the PRD §8 envelope (13–17 weeks).
 
 ## 3. Priority Matrix
 
@@ -171,5 +182,6 @@ Audio capture (T-401/402) is deliberately parallel-safe: it can be built during 
 | 1.0.0 | 2026-07-08 | Initial version for Phase 12 review. |
 | 1.1.0 | 2026-07-23 | M8 added (post-M6, unplanned): OpenRouter provider + free-tier reliability work (T-801…T-803), closing the docs-sync debt left by the M8 code branch. |
 | 1.2.0 | 2026-07-23 | M9 added (post-M6, unplanned): two independent streams — TTS → `takada-tts-service` (T-901…T-902), LLM providers → OmniRoute (T-903…T-905). |
+| 1.3.0 | 2026-07-24 | M10 added (post-M6, unplanned): clap-to-wake (T-1001…T-1006), splitting FR-14 into a DSP-only clap trigger (this milestone) and the deferred voice-phrase wake word (docs/08 §7, now M11-candidate). Requires the tray/single-instance residency work that near-instant wake depends on. |
 
 **Exit check:** every FR maps into a task; effort totals fit the PRD envelope; slip order agreed; every task ≤ 8 h (splittable into one sitting).
