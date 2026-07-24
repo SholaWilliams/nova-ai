@@ -175,7 +175,7 @@ def test_changing_voice_combo_emits_voice_changed(view: SettingsView, qtbot: obj
 
 
 def test_omniroute_model_combo_defaults_to_settings_value(view: SettingsView) -> None:
-    assert view._omniroute_model_combo.currentText() == "auto/coding"
+    assert view._omniroute_model_combo.currentText() == "auto/chat"
 
 
 def test_committing_omniroute_model_combo_emits_omniroute_model_changed(

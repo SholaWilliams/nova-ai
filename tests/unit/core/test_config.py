@@ -41,7 +41,7 @@ def test_get_data_dir_falls_back_to_home_without_appdata(monkeypatch: MonkeyPatc
 def test_load_settings_missing_file_returns_defaults(tmp_path: Path) -> None:
     settings = load_settings(tmp_path / "settings.json")
     assert settings == Settings()
-    assert settings.provider.omniroute_model == "auto/coding"
+    assert settings.provider.omniroute_model == "auto/chat"
     assert settings.weather.default_city == "Lagos"
 
 
@@ -81,7 +81,7 @@ def test_load_settings_invalid_section_reverts_only_that_section(tmp_path: Path)
 
     settings = load_settings(path)
 
-    assert settings.provider.omniroute_model == "auto/coding"  # reverted to default
+    assert settings.provider.omniroute_model == "auto/chat"  # reverted to default
     assert settings.weather.default_city == "Nairobi"  # untouched, valid
 
 
@@ -124,7 +124,7 @@ def test_load_settings_preserves_unknown_field_within_a_section(tmp_path: Path) 
     path = tmp_path / "settings.json"
     path.write_text(
         json.dumps(
-            {"version": 1, "provider": {"omniroute_model": "auto/coding", "future_field": 42}}
+            {"version": 1, "provider": {"omniroute_model": "auto/chat", "future_field": 42}}
         ),
         encoding="utf-8",
     )
@@ -143,7 +143,7 @@ def test_save_settings_writes_readable_json(tmp_path: Path) -> None:
 
     on_disk = json.loads(path.read_text(encoding="utf-8"))
     assert on_disk["version"] == 1
-    assert on_disk["provider"]["omniroute_model"] == "auto/coding"
+    assert on_disk["provider"]["omniroute_model"] == "auto/chat"
 
 
 def test_save_settings_creates_parent_directory(tmp_path: Path) -> None:

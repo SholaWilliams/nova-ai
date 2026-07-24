@@ -71,12 +71,11 @@ class ProviderSettings(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     omniroute_base_url: str = "http://127.0.0.1:20128"
-    # ⚠️ verify-at-implementation (M9): OmniRoute's public docs don't list a specific model id
-    # with confirmed tool-calling support (unlike OpenRouter's catalog, which did) — "auto/coding"
-    # (OmniRoute's own "quality-first" combo name) is the closest documented option, a
-    # placeholder pending owner verification against their own OmniRoute dashboard/model
-    # catalog once it's running. See docs/04 TD-4.
-    omniroute_model: str = "auto/coding"
+    # Verified 2026-07-23 (M9) against a live local OmniRoute instance's GET /v1/models:
+    # "auto/coding" (the original placeholder) is real and tool-calling-capable, but tuned for
+    # coding agents; "auto/chat" (also tool_calling=true in the live catalog) fits a general
+    # assistant with weather/calculator/tool use better. See docs/04 TD-4.
+    omniroute_model: str = "auto/chat"
 
 
 class VoiceSettings(BaseModel):

@@ -32,7 +32,7 @@ _MESSAGES = [ChatMessage(role="user", content="Say 'hello' and nothing else.")]
 @pytest.mark.skipif(not _SECRETS.omniroute_api_key, reason="NOVA_OMNIROUTE_API_KEY not configured")
 def test_real_omniroute_call_returns_text() -> None:
     provider = OmniRouteProvider(
-        base_url="http://127.0.0.1:20128", api_key=_SECRETS.omniroute_api_key, model="auto/coding"
+        base_url="http://127.0.0.1:20128", api_key=_SECRETS.omniroute_api_key, model="auto/chat"
     )
 
     result = provider.generate(_MESSAGES, [], _OPTS)
@@ -44,7 +44,7 @@ def test_real_omniroute_call_returns_text() -> None:
 @pytest.mark.skipif(not _SECRETS.omniroute_api_key, reason="NOVA_OMNIROUTE_API_KEY not configured")
 def test_bad_key_raises_auth_error() -> None:
     provider = OmniRouteProvider(
-        base_url="http://127.0.0.1:20128", api_key="invalid-key-for-live-drill", model="auto/coding"
+        base_url="http://127.0.0.1:20128", api_key="invalid-key-for-live-drill", model="auto/chat"
     )
 
     with pytest.raises(AuthError):
