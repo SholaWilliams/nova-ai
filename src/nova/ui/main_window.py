@@ -157,6 +157,7 @@ class MainWindow(QMainWindow):
         # gets stranded hidden with no tray to reopen it from.
         self._shown_tray_hint = False
         self._tray_icon = self._build_tray_icon()
+        self.set_wake_indicator(settings.wake.enabled)
         if QSystemTrayIcon.isSystemTrayAvailable():
             self._tray_icon.show()
 
@@ -468,9 +469,7 @@ class MainWindow(QMainWindow):
         (docs/08 §7a). Raises the window (residency) and starts listening exactly like a mic
         press — reuses `_on_mic_clicked` rather than duplicating its guards, and is a no-op
         if NOVA is already listening/replying or has no usable microphone."""
-        self.show()
-        self.raise_()
-        self.activateWindow()
+        self._restore_from_tray()
         if self._listening or self._awaiting_reply or not self._mic_available:
             return
         self._on_mic_clicked()
@@ -565,7 +564,6 @@ class MainWindow(QMainWindow):
         painter.end()
 
         tray = QSystemTrayIcon(QIcon(pixmap), self)
-        tray.setToolTip(_TRAY_TOOLTIP_ON if self._settings.wake.enabled else _TRAY_TOOLTIP_OFF)
         tray.activated.connect(self._on_tray_activated)
 
         menu = QMenu(self)
@@ -575,7 +573,6 @@ class MainWindow(QMainWindow):
 
         self._tray_wake_action = QAction("Clap to wake", self)
         self._tray_wake_action.setCheckable(True)
-        self._tray_wake_action.setChecked(self._settings.wake.enabled)
         self._tray_wake_action.toggled.connect(self.tray_wake_toggled)
         menu.addAction(self._tray_wake_action)
 
