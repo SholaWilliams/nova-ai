@@ -64,6 +64,7 @@ class OmniRouteProvider(LLMProvider):
             "messages": [to_openai_message(message) for message in messages],
             "temperature": opts.temperature,
             "max_tokens": opts.max_tokens,
+            "stream": False,
         }
         if tools:
             payload["tools"] = [to_openai_tool(tool) for tool in tools]
@@ -78,7 +79,10 @@ class OmniRouteProvider(LLMProvider):
         except httpx.HTTPError as exc:
             raise Transient(f"omniroute request failed: {exc}") from exc
 
-        return _to_llm_response(response.json())
+        try:
+            return _to_llm_response(response.json())
+        except json.JSONDecodeError as exc:
+            raise Transient(f"omniroute returned invalid JSON: {exc}") from exc
 
     def health_check(self) -> ProviderHealth:
         try:
