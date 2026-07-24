@@ -164,14 +164,14 @@ def test_toggling_tts_checkbox_emits_tts_enabled_changed(view: SettingsView, qtb
 
 
 def test_voice_combo_defaults_to_settings_voice(view: SettingsView) -> None:
-    assert view._voice_combo.currentText() == "cosette"
+    assert view._voice_combo.currentText() == "alba"
 
 
 def test_changing_voice_combo_emits_voice_changed(view: SettingsView, qtbot: object) -> None:
     with qtbot.waitSignal(view.voice_changed, timeout=1000) as blocker:  # type: ignore[attr-defined]
-        view._voice_combo.setCurrentText("alba")
+        view._voice_combo.setCurrentText("cosette")
 
-    assert blocker.args == ["alba"]
+    assert blocker.args == ["cosette"]
 
 
 def test_omniroute_model_combo_defaults_to_settings_value(view: SettingsView) -> None:

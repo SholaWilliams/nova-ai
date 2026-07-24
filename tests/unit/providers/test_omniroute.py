@@ -137,6 +137,34 @@ class TestErrorMapping:
         with pytest.raises(Transient):
             provider.generate([ChatMessage(role="user", content="hi")], [], _OPTS)
 
+    def test_empty_body_maps_to_transient(
+        self, provider: OmniRouteProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            provider._client,
+            "post",
+            lambda *_a, **_kw: httpx.Response(
+                200, content=b"", request=httpx.Request("POST", _URL)
+            ),
+        )
+
+        with pytest.raises(Transient):
+            provider.generate([ChatMessage(role="user", content="hi")], [], _OPTS)
+
+    def test_non_json_body_maps_to_transient(
+        self, provider: OmniRouteProvider, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            provider._client,
+            "post",
+            lambda *_a, **_kw: httpx.Response(
+                200, content=b"<html>gateway error</html>", request=httpx.Request("POST", _URL)
+            ),
+        )
+
+        with pytest.raises(Transient):
+            provider.generate([ChatMessage(role="user", content="hi")], [], _OPTS)
+
     def test_connection_error_maps_to_transient(
         self, provider: OmniRouteProvider, monkeypatch: pytest.MonkeyPatch
     ) -> None:

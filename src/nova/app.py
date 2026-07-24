@@ -250,6 +250,7 @@ def main() -> int:
 
     speech_service.set_listening_level_callback(speech_in_worker.listening_level.emit)
     speech_service.set_tts_mode_callback(speech_out_worker.tts_mode_changed.emit)
+    speech_service.set_speech_started_callback(speech_out_worker.speech_started.emit)
 
     window.mic_pressed.connect(speech_in_worker.listen_request)
     speech_in_worker.transcript_ready.connect(window.on_transcript_ready)
@@ -263,6 +264,7 @@ def main() -> int:
 
     worker.reply_ready.connect(speech_out_worker.speak_request)
     speech_out_worker.tts_mode_changed.connect(window.set_voice_mode)
+    speech_out_worker.speech_started.connect(window.on_speech_started)
     # Direct, not queued — the SpeechOut thread is blocked inside `speak()` when this lands.
     window.stop_speaking_requested.connect(
         speech_out_worker.stop_speaking, Qt.ConnectionType.DirectConnection

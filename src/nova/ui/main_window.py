@@ -100,6 +100,7 @@ class MainWindow(QMainWindow):
         self._listening = False
         self._explicit_cancel = False
         self._mic_available = True
+        self._pending_reply: AssistantReply | None = None
         self.setWindowTitle("NOVA")
         self.resize(*_WINDOW_SIZE)
         self.setMinimumSize(*_MIN_WINDOW_SIZE)
@@ -297,6 +298,7 @@ class MainWindow(QMainWindow):
 
     def _on_new_conversation_clicked(self) -> None:
         self._chat_view.clear()
+        self._pending_reply = None
         self.new_conversation_requested.emit()
 
     def _on_session_item_clicked(self, item: QListWidgetItem) -> None:
@@ -399,9 +401,20 @@ class MainWindow(QMainWindow):
         self.submit_requested.emit(user_input)
 
     def on_reply_ready(self, reply: AssistantReply) -> None:
-        """Connect to `AgentWorker.reply_ready` (queued, cross-thread) from `app.py`."""
-        self._chat_view.add_nova_message(reply.text)
+        """Connect to `AgentWorker.reply_ready` (queued, cross-thread) from `app.py`. Input
+        re-enables immediately, but the bubble itself waits for `on_speech_started` (docs/05
+        §9: "text reveals with the TTS start") — held here rather than shown right away."""
+        self._pending_reply = reply
         self._set_awaiting_reply(False)
+
+    def on_speech_started(self, request_id: str) -> None:
+        """Connect to `SpeechOutWorker.speech_started` (queued, cross-thread) from `app.py`.
+        Reveals the reply text held by `on_reply_ready` once audio has actually started (or
+        `SpeechService` has determined none will play — voice off, nothing to say, or both
+        engines failed all still call this, just immediately)."""
+        if self._pending_reply is not None and self._pending_reply.request_id == request_id:
+            self._chat_view.add_nova_message(self._pending_reply.text)
+            self._pending_reply = None
 
     # ── voice (M4) ───────────────────────────────────────────────────
 

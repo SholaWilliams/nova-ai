@@ -54,6 +54,31 @@ def test_speaks_text_and_completes_the_external_loop(monkeypatch: pytest.MonkeyP
     assert fake_engine.stopped is False
 
 
+def test_on_start_fires_once_the_speech_loop_has_begun(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_engine = _FakeSapiEngine(busy_iterations=1)
+    monkeypatch.setattr(pyttsx3_engine_module.pyttsx3, "init", lambda: fake_engine)
+    engine = Pyttsx3Engine()
+    calls: list[bool] = []
+
+    engine.speak(
+        "hello",
+        voice="ignored",
+        device=None,
+        should_stop=lambda: False,
+        on_start=lambda: calls.append(fake_engine.loop_started),
+    )
+
+    assert calls == [True]
+
+
+def test_on_start_is_optional(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_engine = _FakeSapiEngine(busy_iterations=0)
+    monkeypatch.setattr(pyttsx3_engine_module.pyttsx3, "init", lambda: fake_engine)
+    engine = Pyttsx3Engine()
+
+    engine.speak("hello", voice="ignored", device=None, should_stop=lambda: False)  # no raise
+
+
 def test_should_stop_interrupts_the_loop_and_calls_stop(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_engine = _FakeSapiEngine(busy_iterations=100)
     monkeypatch.setattr(pyttsx3_engine_module.pyttsx3, "init", lambda: fake_engine)

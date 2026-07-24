@@ -186,6 +186,24 @@ class TestAudioPlayback:
         assert len(written) == 1
         np.testing.assert_array_equal(written[0], np.frombuffer(b"\x00\x01", dtype="int16"))
 
+    def test_write_carries_an_odd_trailing_byte_into_the_next_chunk(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Reproduces the real bug: HTTP chunk boundaries (remote_tts.py) don't respect
+        int16 sample boundaries, so a chunk can end on an odd byte count — passing that
+        straight to np.frombuffer raises 'buffer size must be a multiple of element size'."""
+        monkeypatch.setattr(audio_module.sd, "OutputStream", _FakeOutputStream)
+        playback = AudioPlayback()
+        playback.open(samplerate=24000, channels=1, device=None)
+
+        playback.write(b"\x00\x01\x02")  # 3 bytes: one sample + a dangling byte
+        playback.write(b"\x03")  # completes the dangling byte into a second sample
+
+        written = playback._stream.written  # type: ignore[union-attr]
+        assert len(written) == 2
+        np.testing.assert_array_equal(written[0], np.frombuffer(b"\x00\x01", dtype="int16"))
+        np.testing.assert_array_equal(written[1], np.frombuffer(b"\x02\x03", dtype="int16"))
+
     def test_abort_is_callable_without_a_prior_stop(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(audio_module.sd, "OutputStream", _FakeOutputStream)
         playback = AudioPlayback()

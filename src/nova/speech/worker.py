@@ -63,6 +63,9 @@ class SpeechOutWorker(QObject):
     # `SpeechService.set_tts_mode_callback(speech_out_worker.tts_mode_changed.emit)` so the
     # callback (invoked from this worker's own thread) crosses to the main thread via Qt's
     # normal queued-connection delivery rather than touching a widget directly off-thread.
+    speech_started = Signal(str)  # request_id — audio has actually started (docs/05 §9:
+    # "text reveals with the TTS start"); wired the same way as `tts_mode_changed` above via
+    # `SpeechService.set_speech_started_callback(speech_out_worker.speech_started.emit)`.
 
     def __init__(self, service: SpeechService) -> None:
         super().__init__()

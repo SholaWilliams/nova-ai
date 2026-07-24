@@ -181,7 +181,10 @@ class SpeechService:                                     # Phase 8
     def warm_up_tts() -> None                              # M4 addition: not on the frozen wire path,
                                                             # startup-only perf optimization
     signals: listening_level(float), speech_done(str request_id),
-             tts_mode_changed(str)                          # M4 addition: "primary" | "offline"
+             tts_mode_changed(str),                          # M4 addition: "primary" | "offline"
+             speech_started(str request_id)                  # bugfix addition: fires once audio
+                                                               # actually starts (or won't) —
+                                                               # gates the chat bubble's text reveal
 
 class MemoryService:                                     # Phase 9 §4
     def get_context(input: UserInput) -> MemoryContext
@@ -204,6 +207,12 @@ class Agent:                                             # Phase 6
 
 ```json
 {"version": 1,
+ "provider": {"omniroute_base_url": "http://127.0.0.1:20128", "omniroute_model": "auto/coding"},
+ "voice": {"tts_enabled": true, "voice": "alba",
+  "provider": {"active": "gemini", "gemini_model": "gemini-2.5-flash",
+                "groq_model": "llama-3.3-70b-versatile"},
+  "voice": {"tts_enabled": true, "voice": "alba",
+            "tts_base_url": "http://127.0.0.1:8000", "tts_tenant_id": "nova",
  "provider": {"omniroute_base_url": "http://127.0.0.1:20128", "omniroute_model": "auto/chat"},
  "voice": {"tts_enabled": true, "voice": "cosette",
  "provider": {"active": "gemini", "gemini_model": "gemini-2.5-flash",
@@ -239,5 +248,6 @@ Unknown fields are preserved on rewrite (forward compatibility); invalid fields 
 | 1.1.0 | 2026-07-10 | M4: additive `SpeechService` amendments (`end_listening()`, `warm_up_tts()`, `tts_mode_changed` signal); added `AudioDeviceInfo` to §1's core data types (Settings device dropdowns, FR-12). |
 | 1.2.0 | 2026-07-23 | M9 (Stream B): `ProviderSettings` shape replaced — `active`/`gemini_model`/`groq_model`/`openrouter_model` → `omniroute_base_url`/`omniroute_model` (docs/04 TD-4, sole-backend revision). |
 | 1.2.0 | 2026-07-23 | M9 (Stream A): additive `VoiceSettings` fields `tts_base_url`, `tts_tenant_id` (docs/04 TD-6 — `takada-tts-service` connection config). |
+| 1.2.1 | 2026-07-24 | Bugfix: additive `SpeechService` signal `speech_started(str request_id)` — gates the chat bubble's text reveal on real audio start (docs/08 §4, docs/05 §9). |
 
 **Exit check:** every cross-layer arrow in Phase 3 §2 has a typed contract here; all external data is validated at entry; wire formats are golden-testable.
