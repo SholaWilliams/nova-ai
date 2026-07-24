@@ -252,15 +252,13 @@ def main() -> int:
     speech_service.set_tts_mode_callback(speech_out_worker.tts_mode_changed.emit)
     speech_service.set_speech_started_callback(speech_out_worker.speech_started.emit)
 
-    # M10: clap-to-wake (docs/08 §7a). A fourth dedicated worker thread, same idiom as the
-    # three above -- its own AudioCapture so it never competes with SpeechInWorker's stream.
-    wake_worker = WakeWorker(sensitivity=settings.wake.sensitivity)
+    # M10: clap-to-wake (docs/08 §7a). WakeWorker is itself a QThread subclass (see its
+    # docstring for why) -- its own AudioCapture so it never competes with SpeechInWorker's.
+    wake_worker = WakeWorker(
+        sensitivity=settings.wake.sensitivity, device=settings.voice.input_device
+    )
     wake_worker.set_enabled(settings.wake.enabled)
-    wake_worker.set_device(settings.voice.input_device)
-    wake_thread = QThread()
-    wake_worker.moveToThread(wake_thread)
-    wake_thread.started.connect(lambda: wake_worker.start_loop(settings.voice.input_device))
-    wake_thread.start()
+    wake_worker.start()
 
     wake_worker.wake_detected.connect(window.on_wake_detected)
     # Direct, not queued -- these just flip a bool the wake loop polls; no thread is blocked
@@ -403,11 +401,12 @@ def main() -> int:
         )
 
     def _shutdown_worker_threads() -> None:
-        # wake_worker.start_loop() blocks in its own polling loop rather than an idle Qt
-        # event loop -- thread.quit() alone can't interrupt it, so it needs an explicit stop
-        # request first (docs/08 §7a).
+        # WakeWorker overrides run() instead of using the exec()-event-loop model the other
+        # three threads use (see its class docstring) -- quit() is meaningless here, only
+        # stop_loop() + wait() actually joins it.
         wake_worker.stop_loop()
-        for thread in (agent_thread, speech_in_thread, speech_out_thread, wake_thread):
+        wake_worker.wait()
+        for thread in (agent_thread, speech_in_thread, speech_out_thread):
             thread.quit()
             thread.wait()
 

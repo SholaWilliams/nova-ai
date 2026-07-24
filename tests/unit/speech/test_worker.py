@@ -189,11 +189,11 @@ class TestWakeWorker:
         worker.resume_after_active_listen()
         assert worker._should_capture() is True
 
-    def test_start_loop_returns_immediately_when_already_stopped(self) -> None:
+    def test_run_returns_immediately_when_already_stopped(self) -> None:
         worker = WakeWorker(audio_capture_factory=lambda: _FakeAudioCapture([]))
         worker.stop_loop()
 
-        worker.start_loop(device=None)  # must not hang
+        worker.run()  # must not hang -- this is QThread's real entry point (see class docstring)
 
     def test_capture_until_interrupted_emits_wake_detected_on_double_clap(
         self, monkeypatch: pytest.MonkeyPatch, qtbot: object

@@ -15,7 +15,7 @@ import logging
 import time
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QThread, Signal
 
 from nova.core.errors import SpeechError
 from nova.core.models import AssistantReply
@@ -98,14 +98,26 @@ class SpeechOutWorker(QObject):
         self._service.stop_speaking()
 
 
-class WakeWorker(QObject):
-    """Owns a dedicated `AudioCapture` + `ClapDetector` loop (docs/08 §7a). Lives on its own
-    `QThread`, independent of `SpeechInWorker` — never opens its microphone stream at the same
-    time push-to-talk has one open (the WDM-KS lesson, docs/08 §5: two simultaneous
-    `sd.InputStream`s on one device is a real Windows failure mode, not a hypothetical one).
-    `set_enabled`/`set_device`/`pause_for_active_listen`/`resume_after_active_listen` are all
-    direct calls from any thread, same idiom as `SpeechInWorker.cancel_listening` — they only
-    flip plain booleans the loop polls, nothing queued.
+class WakeWorker(QThread):
+    """Owns a dedicated `AudioCapture` + `ClapDetector` loop (docs/08 §7a) — independent of
+    `SpeechInWorker`, never opens its microphone stream at the same time push-to-talk has one
+    open (the WDM-KS lesson, docs/08 §5: two simultaneous `sd.InputStream`s on one device is a
+    real Windows failure mode, not a hypothetical one).
+
+    Subclasses `QThread` and overrides `run()` directly, unlike every other worker in this
+    module (`SpeechInWorker`/`SpeechOutWorker`/`AgentWorker` are plain `QObject`s moved onto a
+    separate `QThread`, relying on that thread's default `exec()` event loop for queued slot
+    delivery). This worker never needs that: `set_enabled`/`set_device`/
+    `pause_for_active_listen`/`resume_after_active_listen`/`stop_loop` are all direct calls
+    from any thread, same idiom as `SpeechInWorker.cancel_listening` — they only flip plain
+    booleans the loop polls, nothing queued. Using the `moveToThread` + `started`-signal idiom
+    here anyway is a genuine deadlock, not just a style mismatch: `QThread`'s real entry point
+    emits `started` and calls the connected slot *before* invoking `run()`'s default `exec()`;
+    if that slot never returns (as this loop deliberately doesn't, until `stop_loop()`),
+    `exec()` never starts, so a `thread.quit()` issued from another thread has no event loop to
+    reach and is silently lost — `thread.wait()` then hangs forever at shutdown. Overriding
+    `run()` instead skips that default `exec()` entirely, so `wait()` only ever waits on this
+    loop returning, which `stop_loop()` reliably does within one `_IDLE_POLL_S` tick.
     """
 
     wake_detected = Signal()
@@ -114,21 +126,22 @@ class WakeWorker(QObject):
         self,
         sensitivity: float = 3.0,
         audio_capture_factory: Callable[[], AudioCapture] = AudioCapture,
+        device: int | None = None,
     ) -> None:
         super().__init__()
         self._sensitivity = sensitivity
         self._audio_capture_factory = audio_capture_factory
-        self._device: int | None = None
+        self._device = device
         self._user_enabled = False
         self._busy = False
         self._stop_requested = False
 
-    def start_loop(self, device: int | None) -> None:
-        """Slot — connect to `QThread.started`. Blocks until `stop_loop()`, polling whether
-        it should actually be capturing right now rather than opening/closing the stream on
-        every flip (Settings toggle, an active listen cycle) — cheaper and simpler than
-        tearing the stream down and rebuilding it on each transition."""
-        self._device = device
+    def run(self) -> None:
+        """`QThread`'s real entry point (see class docstring for why this is overridden
+        rather than using `moveToThread` + `started`). Blocks until `stop_loop()`, polling
+        whether it should actually be capturing right now rather than opening/closing the
+        stream on every flip (Settings toggle, an active listen cycle) — cheaper and simpler
+        than tearing the stream down and rebuilding it on each transition."""
         while not self._stop_requested:
             if not self._should_capture():
                 time.sleep(_IDLE_POLL_S)
@@ -136,7 +149,8 @@ class WakeWorker(QObject):
             self._capture_until_interrupted()
 
     def stop_loop(self) -> None:
-        """Direct call, any thread — breaks the loop so the thread can quit at app shutdown."""
+        """Direct call, any thread — breaks the loop so `run()` returns and `wait()` on this
+        thread completes at app shutdown."""
         self._stop_requested = True
 
     def set_enabled(self, enabled: bool) -> None:
