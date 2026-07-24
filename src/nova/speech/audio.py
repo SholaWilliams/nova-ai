@@ -116,9 +116,11 @@ class AudioPlayback:
 
     def __init__(self) -> None:
         self._stream: sd.OutputStream | None = None
+        self._pending = b""
 
     def open(self, samplerate: int, channels: int, device: int | None) -> None:
         device = _resolve_device(device, "max_output_channels")
+        self._pending = b""
         try:
             self._stream = sd.OutputStream(
                 samplerate=samplerate, channels=channels, dtype="int16", device=device
@@ -131,6 +133,15 @@ class AudioPlayback:
 
     def write(self, pcm: bytes) -> None:
         if self._stream is None:
+            return
+        # HTTP chunk boundaries don't respect int16 sample boundaries, so a chunk can end
+        # on an odd byte — carry that trailing byte over and prepend it to the next chunk.
+        pcm = self._pending + pcm
+        if len(pcm) % 2:
+            pcm, self._pending = pcm[:-1], pcm[-1:]
+        else:
+            self._pending = b""
+        if not pcm:
             return
         try:
             # sd.OutputStream.write needs a numpy array matching its dtype ("int16") —
