@@ -45,10 +45,10 @@ _PROVIDER_LABELS = {"omniroute": "OmniRoute"}
 # (D-5) — this is display data, not behavior, so a local copy is the honest answer, not a
 # layering workaround.
 _VOICE_CATALOG = (
+    "alba",
     "cosette",
     "marius",
     "javert",
-    "alba",
     "jean",
     "anna",
     "vera",

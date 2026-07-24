@@ -87,12 +87,14 @@ class VoiceSettings(BaseModel):
     tts_enabled: bool = True
     # ⚠️ verify-at-implementation (M4, docs/04 TD-6 revision): pocket-tts's built-in, non-
     # gated voice catalog is name-selected (not a locale code like the old `en-US-AnaNeural`
-    # edge-tts default) — catalog: cosette, marius, javert, alba, jean, anna, vera, fantine,
-    # charles, paul, eponine, azelma, george, mary, jane, michael, eve, bill_boerst,
+    # takada-tts-service's default; catalog: alba, cosette, marius, javert, jean, anna, vera,
+    # fantine, charles, paul, eponine, azelma, george, mary, jane, michael, eve, bill_boerst,
     # peter_yearsley, stuart_bell, caro_davy, giovanni, lola, juergen, rafael, estelle.
-    # "cosette" chosen for the association (a child character) — actual timbre unauditioned
-    # in this environment (no speakers); owner should confirm/replace once heard for real.
-    voice: str = "cosette"
+    # "alba" chosen to match takada-tts-service's PocketTTSProvider default (POCKET_TTS_VOICE)
+    # — the service loads only one voice per instance, so Nova's default must match or the
+    # service returns 400. Owner can change the service's env var or pick a different voice
+    # in Settings; just keep them in sync.
+    voice: str = "alba"
     # M9: takada-tts-service connection config (docs/04 TD-6) — a locally-run microservice,
     # not a cloud endpoint, so no API key: see `Secrets` docstring (NFR-8 only covers secrets).
     # Port 8000 confirmed live (2026-07-23) — matches the service's own README default
