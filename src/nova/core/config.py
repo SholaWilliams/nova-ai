@@ -132,6 +132,21 @@ class VadSettings(BaseModel):
     silence_ms: int = Field(default=800, gt=0)
 
 
+class WakeSettings(BaseModel):
+    """Clap-to-wake (M10, docs/08 §7a). `enabled` is the always-listening toggle -- default
+    off (FR-11: NOVA never listens without indication/consent). `sensitivity` is a ponytail
+    calibration knob (rms-over-floor ratio `ClapDetector` needs to call a transient a clap):
+    real microphones vary enough in gain/ambient noise that this may need owner tuning, so
+    it's a settings field even without a UI control yet. `autostart` writes/removes a Windows
+    Startup-folder shortcut so the wake listener survives a reboot without a manual launch."""
+
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = False
+    autostart: bool = False
+    sensitivity: float = Field(default=3.0, gt=0)
+
+
 class AdvancedSettings(BaseModel):
     """Agent-loop and tool-execution limits."""
 
@@ -152,6 +167,7 @@ class Settings(BaseModel):
     voice: VoiceSettings = Field(default_factory=VoiceSettings)
     weather: WeatherSettings = Field(default_factory=WeatherSettings)
     ui: UiSettings = Field(default_factory=UiSettings)
+    wake: WakeSettings = Field(default_factory=WakeSettings)
     advanced: AdvancedSettings = Field(default_factory=AdvancedSettings)
 
 
@@ -160,6 +176,7 @@ _SECTION_MODELS: dict[str, type[BaseModel]] = {
     "voice": VoiceSettings,
     "weather": WeatherSettings,
     "ui": UiSettings,
+    "wake": WakeSettings,
     "advanced": AdvancedSettings,
 }
 

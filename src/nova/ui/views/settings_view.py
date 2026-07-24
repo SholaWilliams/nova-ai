@@ -166,6 +166,8 @@ class SettingsView(QWidget):
     default_city_changed = Signal(str)
     accent_changed = Signal(str)  # "cyan" | "violet" | "emerald" | "amber"
     reduced_motion_changed = Signal(bool)
+    wake_enabled_changed = Signal(bool)  # M10, docs/08 §7a
+    autostart_changed = Signal(bool)  # M10, docs/14 -- Windows Startup-folder shortcut
 
     def __init__(self, settings: Settings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -190,6 +192,7 @@ class SettingsView(QWidget):
 
         layout.addWidget(self._build_brain_section(settings))
         layout.addWidget(self._build_voice_section(settings))
+        layout.addWidget(self._build_wake_section(settings))
         layout.addWidget(self._build_weather_section(settings))
         layout.addWidget(self._build_look_section(settings))
         layout.addWidget(self._build_about_section())
@@ -279,6 +282,30 @@ class SettingsView(QWidget):
         )
         output_row.addWidget(self._output_device_combo, 1)
         section_layout.addLayout(output_row)
+
+        return section
+
+    def _build_wake_section(self, settings: Settings) -> QWidget:
+        """Wake section (M10, docs/08 §7a): always-off by default (FR-11)."""
+        section = QWidget(self)
+        section.setObjectName("surface")
+        section_layout = QVBoxLayout(section)
+        section_layout.setContentsMargins(Spacing.MD, Spacing.MD, Spacing.MD, Spacing.MD)
+        section_layout.setSpacing(Spacing.MD)
+
+        title = QLabel("Wake", section)
+        title.setFont(theme.font(theme.FontRole.DISPLAY))
+        section_layout.addWidget(title)
+
+        self._wake_enabled_checkbox = QCheckBox("Clap twice to wake NOVA", section)
+        self._wake_enabled_checkbox.setChecked(settings.wake.enabled)
+        self._wake_enabled_checkbox.toggled.connect(self.wake_enabled_changed)
+        section_layout.addWidget(self._wake_enabled_checkbox)
+
+        self._autostart_checkbox = QCheckBox("Start NOVA when Windows starts", section)
+        self._autostart_checkbox.setChecked(settings.wake.autostart)
+        self._autostart_checkbox.toggled.connect(self.autostart_changed)
+        section_layout.addWidget(self._autostart_checkbox)
 
         return section
 

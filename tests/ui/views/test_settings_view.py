@@ -167,6 +167,35 @@ def test_voice_combo_defaults_to_settings_voice(view: SettingsView) -> None:
     assert view._voice_combo.currentText() == "alba"
 
 
+# ── wake section (M10, docs/08 §7a) ──────────────────────────────────
+
+
+def test_wake_enabled_checkbox_reflects_settings_default_off(view: SettingsView) -> None:
+    assert view._wake_enabled_checkbox.isChecked() is False
+
+
+def test_toggling_wake_checkbox_emits_wake_enabled_changed(
+    view: SettingsView, qtbot: object
+) -> None:
+    with qtbot.waitSignal(view.wake_enabled_changed, timeout=1000) as blocker:  # type: ignore[attr-defined]
+        view._wake_enabled_checkbox.click()
+
+    assert blocker.args == [True]
+
+
+def test_autostart_checkbox_reflects_settings_default_off(view: SettingsView) -> None:
+    assert view._autostart_checkbox.isChecked() is False
+
+
+def test_toggling_autostart_checkbox_emits_autostart_changed(
+    view: SettingsView, qtbot: object
+) -> None:
+    with qtbot.waitSignal(view.autostart_changed, timeout=1000) as blocker:  # type: ignore[attr-defined]
+        view._autostart_checkbox.click()
+
+    assert blocker.args == [True]
+
+
 def test_changing_voice_combo_emits_voice_changed(view: SettingsView, qtbot: object) -> None:
     with qtbot.waitSignal(view.voice_changed, timeout=1000) as blocker:  # type: ignore[attr-defined]
         view._voice_combo.setCurrentText("cosette")

@@ -41,7 +41,7 @@ from nova.speech.stt.base import STTEngine
 from nova.speech.stt.groq_whisper import GroqSTTEngine
 from nova.speech.tts.pyttsx3_engine import Pyttsx3Engine
 from nova.speech.tts.remote_tts import RemoteTTSEngine
-from nova.speech.worker import SpeechInWorker, SpeechOutWorker
+from nova.speech.worker import SpeechInWorker, SpeechOutWorker, WakeWorker
 from nova.tools.app_launcher import AppLauncherTool
 from nova.tools.base import ToolContext
 from nova.tools.browser import BrowserTool
@@ -252,6 +252,29 @@ def main() -> int:
     speech_service.set_tts_mode_callback(speech_out_worker.tts_mode_changed.emit)
     speech_service.set_speech_started_callback(speech_out_worker.speech_started.emit)
 
+    # M10: clap-to-wake (docs/08 §7a). A fourth dedicated worker thread, same idiom as the
+    # three above -- its own AudioCapture so it never competes with SpeechInWorker's stream.
+    wake_worker = WakeWorker(sensitivity=settings.wake.sensitivity)
+    wake_worker.set_enabled(settings.wake.enabled)
+    wake_worker.set_device(settings.voice.input_device)
+    wake_thread = QThread()
+    wake_worker.moveToThread(wake_thread)
+    wake_thread.started.connect(lambda: wake_worker.start_loop(settings.voice.input_device))
+    wake_thread.start()
+
+    wake_worker.wake_detected.connect(window.on_wake_detected)
+    # Direct, not queued -- these just flip a bool the wake loop polls; no thread is blocked
+    # waiting for them to land, unlike cancel_listening/end_listening above.
+    window.mic_pressed.connect(
+        wake_worker.pause_for_active_listen, Qt.ConnectionType.DirectConnection
+    )
+    speech_in_worker.transcript_ready.connect(
+        wake_worker.resume_after_active_listen, Qt.ConnectionType.DirectConnection
+    )
+    speech_in_worker.failed.connect(
+        wake_worker.resume_after_active_listen, Qt.ConnectionType.DirectConnection
+    )
+
     window.mic_pressed.connect(speech_in_worker.listen_request)
     speech_in_worker.transcript_ready.connect(window.on_transcript_ready)
     speech_in_worker.failed.connect(window.on_listen_failed)
@@ -332,15 +355,22 @@ def main() -> int:
     def _on_input_device_changed(device: int | None) -> None:
         settings.voice.input_device = device
         save_settings(settings, data_dir / "settings.json")
+        wake_worker.set_device(device)
 
     def _on_output_device_changed(device: int | None) -> None:
         settings.voice.output_device = device
         save_settings(settings, data_dir / "settings.json")
 
+    def _on_wake_enabled_changed(enabled: bool) -> None:
+        settings.wake.enabled = enabled
+        save_settings(settings, data_dir / "settings.json")
+        wake_worker.set_enabled(enabled)
+
     window.settings_view.tts_enabled_changed.connect(_on_tts_enabled_changed)
     window.settings_view.voice_changed.connect(_on_voice_changed)
     window.settings_view.input_device_changed.connect(_on_input_device_changed)
     window.settings_view.output_device_changed.connect(_on_output_device_changed)
+    window.settings_view.wake_enabled_changed.connect(_on_wake_enabled_changed)
     window.settings_view.set_input_devices(list_input_devices())
     window.settings_view.set_output_devices(list_output_devices())
 
@@ -373,7 +403,11 @@ def main() -> int:
         )
 
     def _shutdown_worker_threads() -> None:
-        for thread in (agent_thread, speech_in_thread, speech_out_thread):
+        # wake_worker.start_loop() blocks in its own polling loop rather than an idle Qt
+        # event loop -- thread.quit() alone can't interrupt it, so it needs an explicit stop
+        # request first (docs/08 §7a).
+        wake_worker.stop_loop()
+        for thread in (agent_thread, speech_in_thread, speech_out_thread, wake_thread):
             thread.quit()
             thread.wait()
 

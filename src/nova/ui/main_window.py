@@ -448,6 +448,18 @@ class MainWindow(QMainWindow):
         self._set_awaiting_reply(True)
         self.submit_requested.emit(user_input)
 
+    def on_wake_detected(self) -> None:
+        """Connect to `WakeWorker.wake_detected` (queued, cross-thread) from `app.py`
+        (docs/08 §7a). Raises the window (residency) and starts listening exactly like a mic
+        press — reuses `_on_mic_clicked` rather than duplicating its guards, and is a no-op
+        if NOVA is already listening/replying or has no usable microphone."""
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        if self._listening or self._awaiting_reply or not self._mic_available:
+            return
+        self._on_mic_clicked()
+
     def on_listen_failed(self, friendly_message: str) -> None:
         """Connect to `SpeechInWorker.failed` (queued, cross-thread) from `app.py` — last-
         resort safety net; `SpeechService` itself handles every documented failure without

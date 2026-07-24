@@ -9,6 +9,7 @@ from pytest import MonkeyPatch
 from nova.core.config import (
     Secrets,
     Settings,
+    WakeSettings,
     get_data_dir,
     load_settings,
     save_settings,
@@ -103,6 +104,54 @@ def test_load_settings_valid_file_round_trips_values(tmp_path: Path) -> None:
     assert settings.provider.omniroute_model == "custom/model"
     assert settings.ui.accent == "violet"
     assert settings.ui.reduced_motion is True
+
+
+# ── WakeSettings (M10, docs/08 §7a) ──────────────────────────────────
+
+
+def test_wake_settings_defaults_off() -> None:
+    wake = WakeSettings()
+
+    assert wake.enabled is False
+    assert wake.autostart is False
+    assert wake.sensitivity == 3.0
+
+
+def test_load_settings_missing_wake_section_defaults_to_disabled(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"version": 1}), encoding="utf-8")
+
+    settings = load_settings(path)
+
+    assert settings.wake.enabled is False
+
+
+def test_load_settings_round_trips_wake_section(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps(
+            {"version": 1, "wake": {"enabled": True, "autostart": True, "sensitivity": 4.5}}
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_settings(path)
+
+    assert settings.wake.enabled is True
+    assert settings.wake.autostart is True
+    assert settings.wake.sensitivity == 4.5
+
+
+def test_load_settings_invalid_wake_section_reverts_to_defaults(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps({"version": 1, "wake": {"sensitivity": "loud"}}),  # float — a str fails
+        encoding="utf-8",
+    )
+
+    settings = load_settings(path)
+
+    assert settings.wake.sensitivity == 3.0  # reverted to default
 
 
 # ── Settings: unknown-field preservation (forward compatibility) ────

@@ -289,6 +289,49 @@ def test_mic_click_is_ignored_while_awaiting_a_reply(window: MainWindow) -> None
     assert received == []
 
 
+def test_wake_detected_starts_listening_like_a_mic_click(window: MainWindow, qtbot: object) -> None:
+    window._settings.voice.input_device = 3
+
+    with qtbot.waitSignal(window.mic_pressed, timeout=1000) as blocker:  # type: ignore[attr-defined]
+        window.on_wake_detected()
+
+    assert blocker.args == [3]
+    assert window._listening is True
+
+
+def test_wake_detected_is_ignored_while_already_listening(
+    window: MainWindow, qtbot: object
+) -> None:
+    window._mic_button.click()  # now listening
+
+    received: list[object] = []
+    window.mic_pressed.connect(lambda device: received.append(device))
+    window.on_wake_detected()
+
+    assert received == []
+
+
+def test_wake_detected_is_ignored_while_awaiting_a_reply(window: MainWindow) -> None:
+    window._entry.setText("hi")
+    window._send_button.click()  # now awaiting a reply
+
+    received: list[object] = []
+    window.mic_pressed.connect(lambda device: received.append(device))
+    window.on_wake_detected()
+
+    assert received == []
+
+
+def test_wake_detected_is_ignored_without_a_usable_microphone(window: MainWindow) -> None:
+    window.set_mic_available(False)
+
+    received: list[object] = []
+    window.mic_pressed.connect(lambda device: received.append(device))
+    window.on_wake_detected()
+
+    assert received == []
+
+
 def test_escape_while_listening_emits_listening_cancelled_not_cancel_requested(
     window: MainWindow, qtbot: object
 ) -> None:
